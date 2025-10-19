@@ -1,9 +1,9 @@
-# 🩺 Towards Comprehensive Benchmarking of Medical Vision–Language Models (VLMs)  
+# Towards Comprehensive Benchmarking of Medical Vision–Language Models (VLMs)  
 ### MedVLM Phase 1  
 
 ---
 
-## 🔍 Overview
+## Overview
 This repository supports the **first phase** of an ongoing research project on **efficient Medical Vision–Language Models (VLMs)** for radiology applications.  
 The goal is to establish **reproducible baselines** for *small and efficient* models on key imaging tasks — **zero-shot classification**, **multimodal retrieval**, and **report summarization** — using publicly available datasets.
 
@@ -11,19 +11,19 @@ This work is conducted under the mentorship of **Dr. Sanjan T. P. Gupta (AI for 
 
 ---
 
-## 🧩 Research Focus
+## Research Focus
 Large-scale multimodal models (e.g., GPT-4V, CLIP, LLaVA-Med) deliver excellent results but are challenging to deploy in healthcare due to compute, interpretability, and data-governance limitations.  
 This research benchmarks **smaller, domain-specific medical VLMs (< 10 B parameters)** to understand **accuracy–efficiency trade-offs** in clinical AI.
 
 **Models currently explored**
-- 🧠 [MedCLIP](https://github.com/UCSD-AI4H/MedCLIP) – Contrastive learning for image–text alignment  
-- 🧬 [BioMedCLIP](https://huggingface.co/microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224) – PubMedBERT-based cross-modal encoder  
-- 🫁 [CheXzero](https://github.com/rajpurkarlab/chexzero) – Zero-shot chest X-ray classification  
-- 💬 [LLaVA-Med](https://github.com/microsoft/LLaVA-Med) / [XrayGPT](https://github.com/UCSD-AI4H/XrayGPT) – Vision–language reasoning and report generation  
+- [MedCLIP](https://github.com/UCSD-AI4H/MedCLIP) – Contrastive learning for image–text alignment  
+- [BioMedCLIP](https://huggingface.co/microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224) – PubMedBERT-based cross-modal encoder  
+- [CheXzero](https://github.com/rajpurkarlab/chexzero) – Zero-shot chest X-ray classification  
+- [LLaVA-Med](https://github.com/microsoft/LLaVA-Med) / [XrayGPT](https://github.com/UCSD-AI4H/XrayGPT) – Vision–language reasoning and report generation  
 
 ---
 
-## 🧠 Dataset Usage
+## Dataset Usage
 
 ### **Phase 1 — Local experiments**  
 For initial benchmarking and reproducibility, we use the **Indiana University Chest X-Ray dataset**:  
@@ -40,7 +40,7 @@ Next, the pipeline will extend to **MIMIC-CXR v2.1.0** after data-use approval.
 
 ---
 
-## ⚙️ Setup Instructions
+## Setup Instructions
 
 ### **1 — Clone the repository**
 ```bash
@@ -50,7 +50,7 @@ cd MedVLMPhase1
 
 ---
 
-### **2 — Create the Environment
+### **2 — Create the Environment**
 ```bash
 conda create -n medvlm python=3.9 -y
 conda activate medvlm
@@ -58,14 +58,14 @@ conda activate medvlm
 
 ---
 
-### **3 — Install Dependencies
+### **3 — Install Dependencies**
 ```bash
 pip install -r requirements.txt
 ```
 
 ---
 
-### **4 — Directory Structure
+### **4 — Directory Structure**
 
 ```
 MedVLMPhase1/
@@ -83,7 +83,7 @@ MedVLMPhase1/
 
 ---
 
-## 🧪 Evaluation Tasks
+## Evaluation Tasks
 
 | **Task** | **Description** | **Metrics** |
 |:--|:--|:--|
@@ -94,7 +94,7 @@ MedVLMPhase1/
 
 ---
 
-## 🧮 Model Parameter Overview
+## Model Parameter Overview
 
 | **Model** | **Architecture** | **Parameters** | **Core Capability** |
 |:--|:--|:--|:--|
@@ -105,7 +105,7 @@ MedVLMPhase1/
 
 ---
 
-## 🧭 Evaluation Pipeline
+## Evaluation Pipeline
 
 1️⃣  Preprocessing — Resize & normalize images (224 × 224 px)
 2️⃣  Feature Extraction — Generate embeddings via MedCLIP / BioMedCLIP
@@ -115,25 +115,25 @@ MedVLMPhase1/
 
 ---
 
-## 🧩 Next Steps
+## Next Steps
 
-- 📈 **Extend benchmarking** to MIMIC-CXR Phase 2 (post-access approval)  
-- ⚙️ **Apply quantization** and **LoRA fine-tuning** for efficient inference  
+- **Extend benchmarking** to MIMIC-CXR Phase 2 (post-access approval)  
+- **Apply quantization** and **LoRA fine-tuning** for efficient inference  
 
 ---
 
-## ⚖️ Ethics & Compliance
+## Ethics & Compliance
 
 This repository adheres to ethical AI research and data-governance standards:
 
-- 🩻 Uses only **public, de-identified datasets** (Indiana University Chest X-rays)  
-- 📜 Complies with **PhysioNet Data Use Agreement (DUA)** for MIMIC-CXR access  
-- 🧠 Employs only **open-source pretrained models** under their respective licenses  
-- 🔒 No patient or personally identifiable information (PII) is stored or shared  
+- Uses only **public, de-identified datasets** (Indiana University Chest X-rays)  
+- Complies with **PhysioNet Data Use Agreement (DUA)** for MIMIC-CXR access  
+- Employs only **open-source pretrained models** under their respective licenses  
+- No patient or personally identifiable information (PII) is stored or shared  
 
 ---
 
-## 📚 References
+## References
 
 1. **Wang Z. et al.** *MedCLIP: Contrastive Learning for Medical Vision–Language Understanding.*  
    arXiv preprint, 2023. [🔗 arXiv:2303.XXXX](https://arxiv.org/abs/2303.XXXX)
@@ -149,7 +149,7 @@ This repository adheres to ethical AI research and data-governance standards:
 
 ---
 
-## 🧾 License
+## License
 
 This project is released under the **MIT License** for research and educational purposes.  
 If you build upon or reproduce this work, please provide proper attribution.
@@ -158,7 +158,7 @@ If you build upon or reproduce this work, please provide proper attribution.
 
 ---
 
-## 📘 Learn More
+## Learn More
 
 For extended methodology, dataset notes, and evaluation design:  
 📖 Read the detailed [**PROJECT_OVERVIEW.md**](PROJECT_OVERVIEW.md)
