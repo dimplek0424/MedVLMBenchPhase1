@@ -107,11 +107,11 @@ MedVLMPhase1/
 
 ## Evaluation Pipeline
 
-1️⃣  Preprocessing — Resize & normalize images (224 × 224 px)
-2️⃣  Feature Extraction — Generate embeddings via MedCLIP / BioMedCLIP
-3️⃣  Zero-Shot or Retrieval Evaluation — Compute similarity or class predictions
-4️⃣  Summarization Phase — Use LLaVA-Med / XrayGPT for report generation
-5️⃣  Efficiency Metrics — Record latency, memory usage & throughput
+- 1️⃣  Preprocessing — Resize & normalize images (224 × 224 px)
+- 2️⃣  Feature Extraction — Generate embeddings via MedCLIP / BioMedCLIP
+- 3️⃣  Zero-Shot or Retrieval Evaluation — Compute similarity or class predictions
+- 4️⃣  Summarization Phase — Use LLaVA-Med / XrayGPT for report generation
+- 5️⃣  Efficiency Metrics — Record latency, memory usage & throughput
 
 ---
 
