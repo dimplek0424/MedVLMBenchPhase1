@@ -1,0 +1,10 @@
+torch==2.5.1
+torchvision==0.20.1
+transformers==4.37.2
+sentence-transformers==2.6.1
+open-clip-torch>=2.26.0
+Pillow
+matplotlib
+tqdm
+scikit-learn
+huggingface_hub

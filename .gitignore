@@ -1,0 +1,46 @@
+# === DATASETS / RESULTS (DO NOT PUSH) ===
+data/
+outputs/
+
+# === MODEL WEIGHTS / CACHES ===
+medclip-vit-base-patch16/
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.safetensors
+*.onnx
+
+# HF / Torch caches
+.huggingface/
+.hf_cache/
+cache/
+cache_dir/
+**/.cache/
+**/torch_cache/
+
+# Archives / temp
+*.zip
+*.7z
+*.tar
+*.tar.gz
+
+# === PY + IDE NOISE ===
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.ipynb_checkpoints/
+.vscode/
+.idea/
+*.log
+
+# === OS files ===
+.DS_Store
+Thumbs.db
+
+# === Secrets / Env ===
+.env
+.env.*
+*.secret
+*.key
