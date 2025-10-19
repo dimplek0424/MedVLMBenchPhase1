@@ -107,7 +107,6 @@ MedVLMPhase1/
 
 ## 🧭 Evaluation Pipeline
 
-```text
 1️⃣  Preprocessing — Resize & normalize images (224 × 224 px)
 2️⃣  Feature Extraction — Generate embeddings via MedCLIP / BioMedCLIP
 3️⃣  Zero-Shot or Retrieval Evaluation — Compute similarity or class predictions
