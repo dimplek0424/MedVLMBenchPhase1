@@ -46,6 +46,7 @@ Next, the pipeline will extend to **MIMIC-CXR v2.1.0** after data-use approval.
 ```bash
 git clone https://github.com/dimplek0424/MedVLMPhase1.git
 cd MedVLMPhase1
+```
 
 ---
 
@@ -53,15 +54,20 @@ cd MedVLMPhase1
 ```bash
 conda create -n medvlm python=3.9 -y
 conda activate medvlm
+```
 
 ---
 
 ### **3 — Install Dependencies
+```bash
 pip install -r requirements.txt
+```
 
 ---
 
 ### **4 — Directory Structure
+
+```
 MedVLMPhase1/
 │
 ├── notebooks/
@@ -73,6 +79,7 @@ MedVLMPhase1/
 ├── outputs/     # Metrics & logs (excluded)
 ├── requirements.txt
 └── README.md
+```
 
 ---
 
