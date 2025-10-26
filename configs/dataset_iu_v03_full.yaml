@@ -1,0 +1,15 @@
+dataset:
+  name: iu_chestxray
+  root: "D:/MedVLMPhase1/data/chestxray_iu"
+  images_dir: "images/images_normalized"    # full dataset
+  split: "all"
+preprocess:
+  size: [224, 224]
+  mode: "gray"               # CXR grayscale by default
+  use_clahe: true            # reproducible contrast enhancement
+runtime:
+  batch_size: 8
+  num_workers: 4
+  device: "auto"             # "cuda" if available else "cpu"
+logging:
+  out_dir: "D:/MedVLMPhase1/results/projection"
