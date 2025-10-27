@@ -1,28 +1,9 @@
-# configs/dataset_iu_v03_full.yaml
 dataset:
   name: iu_chestxray
-<<<<<<< HEAD
-  root: "/kaggle/input/chest-xrays-indiana-university"
-  images_dir: "images/images_normalized"
-  split: "all"
-preprocess:
-  size: [224, 224]
-  mode: "gray"
-  use_clahe: true
-runtime:
-  batch_size: 8
-  num_workers: 4
-  device: "auto"
-=======
-
-  # LOCAL DEFAULT (Windows): your real folder
-  # On Kaggle we'll override this via: os.environ["DATA_DIR"] = "/kaggle/input/chest-xrays-indiana-university"
-  base_dir: ${ENV:DATA_DIR:D:/MedVLMPhase1/data/chestxray_iu}
-
-  # Your actual subfolder + files
-  images_subdir: images/images_normalized
-  reports_csv: indiana_reports.csv
-  projections_csv: indiana_projections.csv  # keep if your code uses projections; safe to have
+  base_dir: "D:/MedVLMPhase1/data/chestxray_iu"
+  images_subdir: "images/images_normalized"
+  reports_csv: "indiana_reports.csv"
+  projections_csv: "indiana_projections.csv"
 
 loader:
   img_size: 224
@@ -31,11 +12,12 @@ loader:
   grayscale: true
 
 output:
-  # LOCAL DEFAULT (Windows): write outputs here unless overridden
-  dir: ${ENV:OUTPUT_DIR:D:/MedVLMPhase1/outputs}
+  dir: "D:/MedVLMPhase1/outputs"
 
->>>>>>> 9c65f25 (Config: set local IU paths; env-overridable for Kaggle)
 logging:
   level: INFO
   save_metrics: true
   save_plots: true
+
+runtime:
+  device: "auto"

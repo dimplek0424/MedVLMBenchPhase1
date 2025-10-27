@@ -12,6 +12,9 @@ from torch.utils.data import Dataset, DataLoader
 from .io import imread, to_float01, resize
 from .transforms import clahe_gray01
 
+import os
+from medvlm_core.io import get_dataset_paths
+
 class CXRDataset(Dataset):
     """
     Minimal dataset for IU Chest X-ray images.
@@ -74,4 +77,36 @@ def make_loader(
     return DataLoader(
         ds, batch_size=batch_size, shuffle=False,
         num_workers=num_workers, pin_memory=True
+    )
+
+def make_loader_from_cfg(cfg) -> DataLoader:
+    """
+    Convenience wrapper: builds a DataLoader directly from the YAML config.
+    It resolves paths via get_dataset_paths(cfg) and uses loader settings.
+    """
+    paths = get_dataset_paths(cfg)
+
+    # loader settings with safe defaults
+    loader_cfg = cfg.get("loader", {})
+    img_size = int(loader_cfg.get("img_size", 224))
+    batch_size = int(loader_cfg.get("batch_size", 32))
+    num_workers = int(loader_cfg.get("num_workers", 2))
+    grayscale = bool(loader_cfg.get("grayscale", True))
+    mode = "gray" if grayscale else "rgb"
+    use_clahe = True  # keep your current behavior; adjust if you have a cfg flag
+
+    # Prefer a relative path if images_dir is inside base_dir; else keep absolute
+    try:
+        images_rel = os.path.relpath(paths["images_dir"], start=paths["base_dir"])
+    except Exception:
+        images_rel = paths["images_dir"]
+
+    return make_loader(
+        root=paths["base_dir"],
+        images_rel_dir=images_rel,
+        size=(img_size, img_size),
+        use_clahe=use_clahe,
+        mode=mode,
+        batch_size=batch_size,
+        num_workers=num_workers
     )

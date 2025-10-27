@@ -19,7 +19,41 @@ import cv2
 import numpy as np
 from pathlib import Path
 from typing import Literal, Tuple
+import os
+from typing import Dict, Any
 
+def get_dataset_paths(cfg: Dict[str, Any]) -> Dict[str, str]:
+    """
+    Resolve dataset paths from YAML config with env-aware defaults.
+    Expects keys:
+      cfg['dataset']['base_dir']
+      cfg['dataset']['images_subdir']
+      cfg['dataset']['reports_csv']
+      (optional) cfg['dataset'].get('projections_csv')
+    """
+    ds = cfg.get("dataset", {})
+    base_dir = os.environ.get("DATA_DIR") or ds.get("base_dir")
+    images_subdir = ds.get("images_subdir", "")
+    reports_csv_name = ds.get("reports_csv")
+    projections_csv_name = ds.get("projections_csv", None)
+
+    if not base_dir:
+        raise ValueError("Config missing: dataset.base_dir")
+    if not reports_csv_name:
+        raise ValueError("Config missing: dataset.reports_csv")
+
+    images_dir = os.path.join(base_dir, images_subdir) if images_subdir else base_dir
+    reports_csv = os.path.join(base_dir, reports_csv_name)
+    projections_csv = (
+        os.path.join(base_dir, projections_csv_name) if projections_csv_name else None
+    )
+
+    return {
+        "base_dir": base_dir,
+        "images_dir": images_dir,
+        "reports_csv": reports_csv,
+        "projections_csv": projections_csv or "",
+    }
 
 def imread(path: str | Path,
            mode: Literal["gray", "rgb"] = "gray") -> np.ndarray:
