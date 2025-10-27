@@ -7,7 +7,9 @@
 This repository supports the **first phase** of an ongoing research project on **efficient Medical Vision–Language Models (VLMs)** for radiology applications.  
 The goal is to establish **reproducible baselines** for *small and efficient* models on key imaging tasks — **zero-shot classification**, **multimodal retrieval**, and **report summarization** — using publicly available datasets.
 
-This work is conducted under the mentorship of **Dr. Sanjan T. P. Gupta (AI for Healthcare)**
+This work is conducted under the **mentorship of Dr. Sanjan T. P. Gupta** (AI for Healthcare) and has been **recognized with:**
+- 🧾 **Poster Talk** — *GIW XXXIV ISCB Main Conference 2025*  
+- 🎤 **Oral Talk** — *ASCS 2025 Symposium on Advanced Computing & Systems*  
 
 ---
 
