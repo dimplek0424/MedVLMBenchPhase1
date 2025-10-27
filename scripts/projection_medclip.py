@@ -27,7 +27,7 @@ from medclip import MedCLIPModel
 
 # Core utils (your local package)
 from medvlm_core.seeds import set_all
-from medvlm_core.dataloader import make_loader
+from medvlm_core.dataloader import make_loader_from_cfg
 from medvlm_core.logging import write_csv, write_json, git_commit_short, config_hash
 from medvlm_core.timer import wallclock, gpu_mem_mb
 
@@ -68,18 +68,11 @@ def main():
     task = yaml.safe_load(open(args.task,   "r"))
 
     set_all(42)
-    device = choose_device(cfg["runtime"]["device"])
+    device_cfg = cfg.get("runtime", {}).get("device", "auto")
+    device = choose_device(device_cfg)
 
     # ----- Data (OpenCV → NumPy via our dataloader) -----
-    loader = make_loader(
-        root=cfg["dataset"]["root"],
-        images_rel_dir=cfg["dataset"]["images_dir"],
-        size=tuple(cfg["preprocess"]["size"]),
-        use_clahe=bool(cfg["preprocess"]["use_clahe"]),
-        mode=cfg["preprocess"]["mode"],
-        batch_size=int(cfg["runtime"]["batch_size"]),
-        num_workers=int(cfg["runtime"]["num_workers"])
-    )
+    loader = make_loader_from_cfg(cfg)
 
     # --- Force CPU map_location for MedCLIP weight loading (library lacks it) ---
     _orig_torch_load = torch.load  # keep original
