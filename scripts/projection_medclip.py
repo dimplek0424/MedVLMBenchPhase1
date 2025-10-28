@@ -1,76 +1,83 @@
-# make repo root importable when running as a script
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Projection-type benchmark (frontal vs lateral) using MedCLIP on FULL IU dataset
+#
+# Run from repo root (Kaggle or local):
+#   python scripts/projection_medclip.py \
+#       --config configs/dataset_iu_v03_full.yaml \
+#       --task   configs/task_projection_v01.yaml \
+#       --out    results/projection/iu_v03_full_medclip.csv
+#
+# Output:
+#   - CSV  : image,p_frontal,p_lateral,pred,latency_sec
+#   - JSON : manifest (config hash, git commit, device, GPU mem delta)
+#
+# Design notes:
+#   • We avoid Hugging Face auth/gated models entirely. MedCLIP’s own
+#     `from_pretrained()` (no args) downloads weights from GCS.
+#   • We patch torch.load → map_location="cpu" during weight load to avoid
+#     CUDA incompatibility on Kaggle; then move the model to device.
+#   • We use HF AutoTokenizer + CLIPProcessor explicitly instead of the
+#     MedCLIPProcessor (more stable across versions).
+#   • Data comes from your medvlm_core DataLoader (float[0,1], CHW).
+#     We convert each sample to HWC uint8 RGB before CLIPProcessor.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# -- Make repo root importable so "medvlm_core.*" works when run as a script
 import sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-"""
-Projection-type benchmark (frontal vs lateral) using MedCLIP on FULL IU dataset.
-
-Run:
-  conda activate medvlm
-  python scripts/projection_medclip.py \
-      --config configs/dataset_iu_v03_full.yaml \
-      --task   configs/task_projection_v01.yaml \
-      --out    results/projection/iu_v03_full_medclip.csv
-
-Output:
-  - CSV: image,p_frontal,p_lateral,pred,latency_sec
-  - JSON manifest alongside CSV (config hash, git commit, device, etc.)
-"""
-
 import argparse
 from pathlib import Path
-import yaml, torch
+import yaml
 import numpy as np
+import torch
 
-# ⬇️ We only need MedCLIPModel (NOT MedCLIPProcessor)
-import os as _os
-import torch as _torch
-from medclip import MedCLIPModel as _MedCLIPModel
+# MedCLIP (model only; processor not used)
+from medclip import MedCLIPModel
 
-# Core utils (your local package)
+# HuggingFace processors (text + vision)
+from transformers import AutoTokenizer, CLIPProcessor
+
+# Your repo utilities
 from medvlm_core.seeds import set_all
 from medvlm_core.dataloader import make_loader_from_cfg
 from medvlm_core.logging import write_csv, write_json, git_commit_short, config_hash
 from medvlm_core.timer import wallclock, gpu_mem_mb
 
-# ⬇️ Use tokenizer + image processor explicitly (HF)
-from transformers import AutoTokenizer, CLIPProcessor
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ──────────────────────────────────────────────────────────────────────────────
 
-# === Helper: CHW float[0,1] → HWC uint8 RGB (Option B boundary) ===
 def chw01_to_hwc_uint8(img_chw_float01: torch.Tensor) -> np.ndarray:
     """
-    Convert a (3,H,W) float32 tensor in [0,1] → (H,W,3) uint8 RGB array.
+    Convert a single image from (C,H,W) float32 in [0,1] → (H,W,3) uint8 RGB.
 
-    Why: MedCLIP expects CLIP-style pixel_values, which we obtain via
-    a Hugging Face image processor that works on HWC uint8 RGB or PIL.
+    Why:
+      CLIPProcessor expects PIL/HWC uint8 or similar; our loader gives CHW [0,1].
     """
     arr = img_chw_float01.detach().cpu().numpy().transpose(1, 2, 0)  # CHW → HWC
     arr = np.clip(arr * 255.0, 0, 255).astype("uint8")
     return arr
 
 
-def parse_args():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--config", required=True)
-    ap.add_argument("--task",   required=True)
-    ap.add_argument("--out",    required=True)
-    return ap.parse_args()
-
-
 def choose_device(device_cfg: str) -> str:
+    """Resolve 'auto' to 'cuda' when available; otherwise return given cfg."""
     if device_cfg == "auto":
         return "cuda" if torch.cuda.is_available() else "cpu"
     return device_cfg
 
-# ---- tolerant loader to handle extra keys in the HF checkpoint ----
-def tolerant_load_medclip(repo_id: str = "umich-hai/medclip-vit-base-patch16") -> "MedCLIPModel":
+
+def tolerant_load_medclip() -> MedCLIPModel:
     """
-    Load MedCLIP weights using the library's own downloader (GCS zip).
-    Avoids any HuggingFace Hub calls (no token needed).
-    Keeps the CPU map_location patch to be safe on Kaggle.
+    Load MedCLIP weights via its internal GCS zip (no HF calls, no token).
+    We temporarily patch torch.load to force map_location='cpu' for safety.
     """
     _orig_torch_load = torch.load
+
     def _cpu_torch_load(*args, **kwargs):
         kwargs.setdefault("map_location", torch.device("cpu"))
         return _orig_torch_load(*args, **kwargs)
@@ -78,103 +85,103 @@ def tolerant_load_medclip(repo_id: str = "umich-hai/medclip-vit-base-patch16") -
     model = MedCLIPModel()
     torch.load = _cpu_torch_load
     try:
-        # NOTE: the medclip package ignores the id and downloads from its internal URL;
-        # keeping the arg for API compatibility, but it's not required.
-        model.from_pretrained(repo_id)
+        # IMPORTANT: no repo_id here → uses MedCLIP's GCS bucket weights.
+        model.from_pretrained()
     finally:
         torch.load = _orig_torch_load
+
     return model
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Main
+# ──────────────────────────────────────────────────────────────────────────────
+
+def parse_args():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--config", required=True, help="YAML config (dataset, loader, runtime)")
+    ap.add_argument("--task",   required=True, help="YAML task spec (contains 'task.labels')")
+    ap.add_argument("--out",    required=True, help="Output CSV path")
+    return ap.parse_args()
+
 
 def main():
     args = parse_args()
     cfg  = yaml.safe_load(open(args.config, "r"))
     task = yaml.safe_load(open(args.task,   "r"))
 
+    # Repro, device
     set_all(42)
-    device_cfg = cfg.get("runtime", {}).get("device", "auto")
-    device = choose_device(device_cfg)
+    device = choose_device(cfg.get("runtime", {}).get("device", "auto"))
 
-    # ----- Data (OpenCV → NumPy via our dataloader) -----
+    # Data: your convenience wrapper uses get_dataset_paths() internally
     loader = make_loader_from_cfg(cfg)
 
-    # --- Force CPU map_location for MedCLIP weight loading (library lacks it) ---
-    _orig_torch_load = torch.load  # keep original
-    def _cpu_torch_load(*args, **kwargs):
-        kwargs.setdefault("map_location", torch.device("cpu"))
-        return _orig_torch_load(*args, **kwargs)
+    # Model: load on CPU, then move to device
+    model = tolerant_load_medclip().to(device).eval()
 
-    # ----- Model -----
-    model_id = "umich-hai/medclip-vit-base-patch16"
-
-    # Use tolerant loader (handles unexpected keys like position_ids)
-    model = tolerant_load_medclip("umich-hai/medclip-vit-base-patch16").to(device).eval()
-    #model = model.to(device).eval()
-
-    # ----- Text & Image processors (replace MedCLIPProcessor) -----
-    # Text branch uses Bio_ClinicalBERT tokenizer
+    # Tokenizer (text) + image processor (vision)
     tokenizer     = AutoTokenizer.from_pretrained("emilyalsentzer/Bio_ClinicalBERT")
-    # Vision branch uses CLIP ViT-B/16 image preprocessor
     img_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch16")
 
-    queries = task["task"]["labels"]  # ["frontal chest x-ray", "lateral chest x-ray"]
+    # Two class prompts, e.g. ["frontal chest x-ray", "lateral chest x-ray"]
+    queries = task["task"]["labels"]
 
-    rows = [("image","p_frontal","p_lateral","pred","latency_sec")]
+    # Results table
+    rows = [("image", "p_frontal", "p_lateral", "pred", "latency_sec")]
     mem0 = gpu_mem_mb()
 
     with torch.no_grad():
         for names, batch_np in loader:
-            # batch_np: (B,C,H,W) float32 in [0,1] – convert to torch
-            # Accept both NumPy and Torch; DataLoader may already collate to tensors
-            if isinstance(batch_np, torch.Tensor):
-                batch = batch_np.to(device)
-            else:
-                batch = torch.from_numpy(batch_np).to(device)
+            # DataLoader may return numpy or torch tensors; normalize to torch.Tensor
+            batch = batch_np if isinstance(batch_np, torch.Tensor) else torch.from_numpy(batch_np)
+            batch = batch.to(device)
 
-            # Ensure 3 channels (MedCLIP/CLIP expects RGB)
+            # Ensure 3 channels for CLIP (RGB)
             if batch.shape[1] == 1:
                 batch = batch.repeat(1, 3, 1, 1)
 
+            # Process images one-by-one (keeps code simple & robust)
             for i, name in enumerate(names):
-                img_t = batch[i:i+1]  # (1,3,H,W)
+                # CHW [0,1] → HWC uint8
+                img_np = chw01_to_hwc_uint8(batch[i])
 
-                # === Option B boundary: CHW float[0,1] → HWC uint8 RGB ===
-                img_np = chw01_to_hwc_uint8(img_t[0])
+                # 1) Text inputs (labels as prompts)
+                text_inputs = tokenizer(queries, padding=True, return_tensors="pt")
 
-                # 1) text → Bio_ClinicalBERT tokenizer
-                text_inputs = tokenizer(
-                    queries,                 # ["frontal chest x-ray", "lateral chest x-ray"]
-                    padding=True,
-                    return_tensors="pt"
-                )
+                # 2) Image inputs (CLIP normalization, resize, etc.)
+                img_inputs = img_processor(images=img_np, return_tensors="pt")
 
-                # 2) image → CLIP image processor (resizes/normalizes to pixel_values)
-                img_inputs = img_processor(
-                    images=img_np,           # HWC uint8 RGB
-                    return_tensors="pt"
-                )
-
-                # 3) merge & move to device
+                # 3) Merge and move to device
                 inputs = {**text_inputs, **img_inputs}
                 inputs = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in inputs.items()}
 
-                # Forward (MedCLIP returns logits_per_image: similarity(image, texts))
+                # Forward pass & timing
                 with wallclock() as t:
                     out = model(**inputs)
                 dt = round(t(), 4)
 
-                probs = out["logits_per_image"].softmax(dim=1)[0].tolist()
+                # Handle both dict and object style returns
+                logits = out["logits_per_image"] if isinstance(out, dict) else getattr(out, "logits_per_image", None)
+                if logits is None:
+                    raise RuntimeError("MedCLIP output missing 'logits_per_image'.")
+
+                probs = logits.softmax(dim=1)[0].tolist()  # [p_frontal, p_lateral]
                 pred  = "frontal" if probs[0] >= probs[1] else "lateral"
                 rows.append((name, probs[0], probs[1], pred, dt))
 
     # Write outputs
     out_csv = Path(args.out)
+    out_csv.parent.mkdir(parents=True, exist_ok=True)  # defensive
     write_csv(rows, out_csv)
 
     manifest = {
         "script": "projection_medclip.py",
         "git_commit": git_commit_short(),
         "config_hash": config_hash(cfg),
-        "config": cfg, "task": task, "device": device,
+        "config": cfg,
+        "task": task,
+        "device": device,
         "gpu_max_mem_mb": gpu_mem_mb() - mem0
     }
     write_json(manifest, out_csv.with_suffix(".json"))
