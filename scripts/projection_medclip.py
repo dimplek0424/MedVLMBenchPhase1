@@ -35,13 +35,11 @@ import yaml
 import numpy as np
 import torch
 
-# MedCLIP (model only; processor not used)
+# MedCLIP
 from medclip import MedCLIPModel
-
-# HuggingFace processors (text + vision)
 from transformers import AutoTokenizer, CLIPProcessor
 
-# Your repo utilities
+# repo utilities
 from medvlm_core.seeds import set_all
 from medvlm_core.dataloader import make_loader_from_cfg
 from medvlm_core.logging import write_csv, write_json, git_commit_short, config_hash
@@ -85,10 +83,20 @@ def tolerant_load_medclip() -> MedCLIPModel:
     model = MedCLIPModel()
     torch.load = _cpu_torch_load
     try:
-        # IMPORTANT: no repo_id here → uses MedCLIP's GCS bucket weights.
-        model.from_pretrained()
+        state = model.from_pretrained(return_state_dict=True)  # get state_dict
+        # If the lib returns a state_dict, load it with strict=False
+        if isinstance(state, dict):
+            model.load_state_dict(state, strict=False)
+    except Exception as e:
+        print("⚠️ Tolerant load triggered:", e)
+        try:
+            # retry normally but tolerate unexpected keys
+            model.from_pretrained()
+        except Exception as e2:
+            print("Fallback load failed:", e2)
+            raise
     finally:
-        torch.load = _orig_torch_load
+        torch.load = orig_load
 
     return model
 
