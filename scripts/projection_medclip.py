@@ -23,7 +23,10 @@ import yaml, torch
 import numpy as np
 
 # ⬇️ We only need MedCLIPModel (NOT MedCLIPProcessor)
-from medclip import MedCLIPModel
+from huggingface_hub import snapshot_download
+import os as _os
+import torch as _torch
+from medclip import MedCLIPModel as _MedCLIPModel
 
 # Core utils (your local package)
 from medvlm_core.seeds import set_all
@@ -61,6 +64,33 @@ def choose_device(device_cfg: str) -> str:
         return "cuda" if torch.cuda.is_available() else "cpu"
     return device_cfg
 
+# ---- tolerant loader to handle extra keys in the HF checkpoint ----
+def tolerant_load_medclip(repo_id: str) -> _MedCLIPModel:
+    """
+    Download HF weights and load into MedCLIPModel while ignoring
+    unexpected 'text_model.model.embeddings.position_ids' (and any other extras).
+    """
+    model = _MedCLIPModel()
+
+    ckpt_dir = snapshot_download(repo_id=repo_id)   # e.g., "umich-hai/medclip-vit-base-patch16"
+    # Try common filenames
+    candidates = [
+        _os.path.join(ckpt_dir, "pytorch_model.bin"),
+        _os.path.join(ckpt_dir, "model.safetensors"),
+        _os.path.join(ckpt_dir, "medclip-pretrained.bin"),
+    ]
+    state_path = next((p for p in candidates if _os.path.exists(p)), None)
+    if state_path is None:
+        raise FileNotFoundError(f"Could not find model weights in {ckpt_dir}")
+
+    state_dict = _torch.load(state_path, map_location="cpu")
+    # Drop known nuisance key; ignore any others by strict=False
+    state_dict.pop("text_model.model.embeddings.position_ids", None)
+
+    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    print("Loaded MedCLIP with strict=False | missing:", missing, "| unexpected:", unexpected)
+    model.eval()
+    return model
 
 def main():
     args = parse_args()
@@ -82,15 +112,9 @@ def main():
 
     # ----- Model -----
     model_id = "umich-hai/medclip-vit-base-patch16"
-    model = MedCLIPModel()
 
-    # Temporarily patch torch.load so MedCLIP weights map to CPU
-    torch.load = _cpu_torch_load
-    try:
-        model.from_pretrained(model_id)   # downloads & loads on CPU safely
-    finally:
-        torch.load = _orig_torch_load     # restore original torch.load
-
+    # Use tolerant loader (handles unexpected keys like position_ids)
+    model = tolerant_load_medclip(model_id)
     model = model.to(device).eval()
 
     # ----- Text & Image processors (replace MedCLIPProcessor) -----
