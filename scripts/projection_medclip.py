@@ -35,8 +35,10 @@ import yaml
 import numpy as np
 import torch
 
-# MedCLIP
+# Only MedCLIPModel needed (NOT MedCLIPProcessor)
 from medclip import MedCLIPModel
+
+# Use HF components explicitly
 from transformers import AutoTokenizer, CLIPProcessor
 
 # repo utilities
@@ -71,32 +73,40 @@ def choose_device(device_cfg: str) -> str:
 
 def tolerant_load_medclip() -> MedCLIPModel:
     """
-    Load MedCLIP weights via its internal GCS zip (no HF calls, no token).
-    We temporarily patch torch.load to force map_location='cpu' for safety.
+    Load MedCLIP while:
+      1) forcing torch.load to map to CPU (works on Kaggle),
+      2) temporarily making load_state_dict(strict=False) to ignore unexpected keys
+         like 'text_model.model.embeddings.position_ids'.
+    Both patches are restored after loading.
     """
-    _orig_torch_load = torch.load
-
-    def _cpu_torch_load(*args, **kwargs):
-        kwargs.setdefault("map_location", torch.device("cpu"))
-        return _orig_torch_load(*args, **kwargs)
-
     model = MedCLIPModel()
-    torch.load = _cpu_torch_load
+
+    # Keep originals so we can restore after loading
+    orig_torch_load = torch.load
+    orig_load_state_dict = torch.nn.Module.load_state_dict
+
+    # 1) Ensure CPU map_location during internal torch.load()
+    def _cpu_load(*args, **kwargs):
+        kwargs.setdefault("map_location", torch.device("cpu"))
+        return orig_torch_load(*args, **kwargs)
+
+    # 2) Force strict=False just during checkpoint restore
+    def _tolerant_load_state_dict(self, state_dict, strict=True):
+        # ignore 'strict' argument; always load with strict=False
+        return orig_load_state_dict(self, state_dict, strict=False)
+
+    # Apply patches
+    torch.load = _cpu_load
+    torch.nn.Module.load_state_dict = _tolerant_load_state_dict
+
     try:
-        state = model.from_pretrained(return_state_dict=True)  # get state_dict
-        # If the lib returns a state_dict, load it with strict=False
-        if isinstance(state, dict):
-            model.load_state_dict(state, strict=False)
-    except Exception as e:
-        print("⚠️ Tolerant load triggered:", e)
-        try:
-            # retry normally but tolerate unexpected keys
-            model.from_pretrained()
-        except Exception as e2:
-            print("Fallback load failed:", e2)
-            raise
+        # medclip internally downloads and calls .load_state_dict(...)
+        # Our patch above lets it ignore unexpected keys cleanly.
+        model.from_pretrained()
     finally:
-        torch.load = orig_load
+        # Always restore
+        torch.load = orig_torch_load
+        torch.nn.Module.load_state_dict = orig_load_state_dict
 
     return model
 
