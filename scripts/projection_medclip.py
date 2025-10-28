@@ -179,10 +179,26 @@ def main():
                     out = model(**inputs)
                 dt = round(t(), 4)
 
-                # Handle both dict and object style returns
-                logits = out["logits_per_image"] if isinstance(out, dict) else getattr(out, "logits_per_image", None)
+                # 1) Try the OpenAI-CLIP-style key
+                logits = None
+                if isinstance(out, dict) and "logits_per_image" in out:
+                    logits = out["logits_per_image"]
+                elif hasattr(out, "logits_per_image"):
+                    logits = out.logits_per_image
+
+                # 2) Fallback: compute logits from embeddings
                 if logits is None:
-                    raise RuntimeError("MedCLIP output missing 'logits_per_image'.")
+                    # Many MedCLIP builds expose encode_image / encode_text
+                    # pixel_values: (1,3,H,W); input_ids/attention_mask: text tokens for 2 prompts
+                    img_emb = model.encode_image(pixel_values=inputs["pixel_values"])
+                    txt_emb = model.encode_text(
+                        input_ids=inputs["input_ids"],
+                        attention_mask=inputs.get("attention_mask")
+                    )
+                    # normalize then cosine-sim = dot product
+                    img_emb = img_emb / (img_emb.norm(dim=-1, keepdim=True) + 1e-9)
+                    txt_emb = txt_emb / (txt_emb.norm(dim=-1, keepdim=True) + 1e-9)
+                    logits = img_emb @ txt_emb.T  # shape [1, 2]
 
                 probs = logits.softmax(dim=1)[0].tolist()  # [p_frontal, p_lateral]
                 pred  = "frontal" if probs[0] >= probs[1] else "lateral"
