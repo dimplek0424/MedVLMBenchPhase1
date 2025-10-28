@@ -23,7 +23,6 @@ import yaml, torch
 import numpy as np
 
 # ⬇️ We only need MedCLIPModel (NOT MedCLIPProcessor)
-from huggingface_hub import snapshot_download
 import os as _os
 import torch as _torch
 from medclip import MedCLIPModel as _MedCLIPModel
@@ -65,31 +64,25 @@ def choose_device(device_cfg: str) -> str:
     return device_cfg
 
 # ---- tolerant loader to handle extra keys in the HF checkpoint ----
-def tolerant_load_medclip(repo_id: str) -> _MedCLIPModel:
+def tolerant_load_medclip(repo_id: str = "umich-hai/medclip-vit-base-patch16") -> "MedCLIPModel":
     """
-    Download HF weights and load into MedCLIPModel while ignoring
-    unexpected 'text_model.model.embeddings.position_ids' (and any other extras).
+    Load MedCLIP weights using the library's own downloader (GCS zip).
+    Avoids any HuggingFace Hub calls (no token needed).
+    Keeps the CPU map_location patch to be safe on Kaggle.
     """
-    model = _MedCLIPModel()
+    _orig_torch_load = torch.load
+    def _cpu_torch_load(*args, **kwargs):
+        kwargs.setdefault("map_location", torch.device("cpu"))
+        return _orig_torch_load(*args, **kwargs)
 
-    ckpt_dir = snapshot_download(repo_id=repo_id)   # e.g., "umich-hai/medclip-vit-base-patch16"
-    # Try common filenames
-    candidates = [
-        _os.path.join(ckpt_dir, "pytorch_model.bin"),
-        _os.path.join(ckpt_dir, "model.safetensors"),
-        _os.path.join(ckpt_dir, "medclip-pretrained.bin"),
-    ]
-    state_path = next((p for p in candidates if _os.path.exists(p)), None)
-    if state_path is None:
-        raise FileNotFoundError(f"Could not find model weights in {ckpt_dir}")
-
-    state_dict = _torch.load(state_path, map_location="cpu")
-    # Drop known nuisance key; ignore any others by strict=False
-    state_dict.pop("text_model.model.embeddings.position_ids", None)
-
-    missing, unexpected = model.load_state_dict(state_dict, strict=False)
-    print("Loaded MedCLIP with strict=False | missing:", missing, "| unexpected:", unexpected)
-    model.eval()
+    model = MedCLIPModel()
+    torch.load = _cpu_torch_load
+    try:
+        # NOTE: the medclip package ignores the id and downloads from its internal URL;
+        # keeping the arg for API compatibility, but it's not required.
+        model.from_pretrained(repo_id)
+    finally:
+        torch.load = _orig_torch_load
     return model
 
 def main():
@@ -114,8 +107,8 @@ def main():
     model_id = "umich-hai/medclip-vit-base-patch16"
 
     # Use tolerant loader (handles unexpected keys like position_ids)
-    model = tolerant_load_medclip(model_id)
-    model = model.to(device).eval()
+    model = tolerant_load_medclip("umich-hai/medclip-vit-base-patch16").to(device).eval()
+    #model = model.to(device).eval()
 
     # ----- Text & Image processors (replace MedCLIPProcessor) -----
     # Text branch uses Bio_ClinicalBERT tokenizer
