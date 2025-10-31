@@ -34,7 +34,7 @@ For initial benchmarking and reproducibility, we use the **Indiana University Ch
 This dataset is compact, publicly available, and manageable on local systems — ideal for CPU-based experimentation without institutional restrictions.
 
 ### **Phase 2 — Clinical-scale expansion**  
-Next, the pipeline will extend to **MIMIC-CXR v2.1.0** after data-use approval.  
+Next, the pipeline will extend to **MIMIC-CXR v2.1.0** after setting up the Kaggle GPU utilization workflow.  
 🔗 [PhysioNet – MIMIC-CXR Dataset](https://physionet.org/content/mimic-cxr/2.1.0/)
 
 > ⚠️ **No patient-identifiable information is stored or shared.**  
