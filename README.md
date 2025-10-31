@@ -46,8 +46,8 @@ Next, the pipeline will extend to **MIMIC-CXR v2.1.0** after setting up the Kagg
 
 ### **1 — Clone the repository**
 ```bash
-git clone https://github.com/dimplek0424/MedVLMPhase1.git
-cd MedVLMPhase1
+git clone https://github.com/dimplek0424/MedVLMBenchPhase1.git
+cd MedVLMBenchPhase1
 ```
 
 ---
@@ -70,7 +70,7 @@ pip install -r requirements.txt
 ### **4 — Directory Structure**
 
 ```
-MedVLMPhase1/
+MedVLMBenchPhase1/
 │
 ├── notebooks/
 │   ├── medclip_demo.py           # MedCLIP baseline (CPU-friendly)
