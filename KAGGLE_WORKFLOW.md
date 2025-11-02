@@ -53,13 +53,13 @@ os.environ["DATA_DIR"]   = "/kaggle/input/chest-xrays-indiana-university"
 os.environ["OUTPUT_DIR"] = "/kaggle/working/outputs"
 
 !python scripts/print_paths.py
-'''
+```
 
 ---
 
 ### 3️⃣ Install Dependencies (Safe for Kaggle)
 
-'''bash
+```bash
 # Base requirements
 !pip install -q -r requirements_kaggle.txt
 
@@ -68,4 +68,4 @@ os.environ["OUTPUT_DIR"] = "/kaggle/working/outputs"
 
 # Minimal extras MedCLIP expects
 !pip install -q wget textaugment
-'''
+```
