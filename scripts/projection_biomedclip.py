@@ -62,7 +62,11 @@ def main(args):
     cfg["dataset"] = ds_cfg
 
     # Validate/resolve dataset paths (returns dict; we don't strictly need it later)
-    _ = get_dataset_paths(cfg["dataset"])
+    # Optional: validate paths, but don't block if some keys (e.g., reports_csv) are absent for this task
+    try:
+        _ = get_dataset_paths(cfg["dataset"])
+    except Exception as e:
+        print("⚠️ Skipping dataset path validation:", repr(e))
 
     # Loader (split can be adjusted by your task if desired)
     loader = make_loader_from_cfg(cfg, split="test")
