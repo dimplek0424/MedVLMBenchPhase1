@@ -1,91 +1,97 @@
+#!/usr/bin/env python
 """
-BioMedCLIP projection-type benchmark (frontal vs lateral).
-
-Run:
-  python scripts/projection_biomedclip.py \
-      --config configs/dataset_iu_v03_full.yaml \
-      --task   configs/task_projection_v01.yaml \
-      --out    results/projection/iu_v03_full_biomedclip.csv
+Projection benchmark for BioMedCLIP (view classification: frontal vs lateral).
+Usage:
+  python scripts/projection_biomedclip.py --config configs/dataset_iu_v03_full.yaml \
+      --task configs/task_projection_v01.yaml --out results/projection/iu_v03_full_biomedclip.csv
 """
 
-import argparse
+import argparse, os, csv, math, torch
 from pathlib import Path
-import yaml, torch
-from transformers import CLIPModel, CLIPProcessor
+from medvlm_core.dataloader import make_loader_from_cfg
+from medvlm_core.io import get_dataset_paths
+import yaml
 
-from medvlm_core.seeds import set_all
-from medvlm_core.dataloader import make_loader
-from medvlm_core.logging import write_csv, write_json, git_commit_short, config_hash
-from medvlm_core.timer import wallclock, gpu_mem_mb
+def build_biomedclip(device: str = "cuda"):
+    """
+    Tries to load BioMedCLIP via open-clip. You can override model/ckpt via env:
+      BIOMEDCLIP_MODEL (default: 'ViT-B-16')
+      BIOMEDCLIP_PRETRAINED (default: 'biomed_clip')
+    If your Kaggle image can’t find weights, set BIOMEDCLIP_HF_REPO (e.g., microsoft/BiomedCLIP-PubMedBERT-base-uncased-ViT-B-16)
+    and we’ll try to load via open-clip’s hf repo arg.
+    """
+    import open_clip
+    model_name = os.getenv("BIOMEDCLIP_MODEL", "ViT-B-16")
+    pretrained = os.getenv("BIOMEDCLIP_PRETRAINED", "biomed_clip")
+    hf_repo = os.getenv("BIOMEDCLIP_HF_REPO", None)
 
-def parse_args():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--config", required=True)
-    ap.add_argument("--task",   required=True)
-    ap.add_argument("--out",    required=True)
-    return ap.parse_args()
+    if hf_repo:
+        model, preprocess_train, preprocess_val = open_clip.create_model_and_transforms(
+            model_name, pretrained=pretrained, pretrained_hf_repo_id=hf_repo, device=device
+        )
+        tokenizer = open_clip.get_tokenizer(model_name)
+    else:
+        model, preprocess_train, preprocess_val = open_clip.create_model_and_transforms(
+            model_name, pretrained=pretrained, device=device
+        )
+        tokenizer = open_clip.get_tokenizer(model_name)
 
-def choose_device(d: str) -> str:
-    return "cuda" if (d == "auto" and torch.cuda.is_available()) else ("cpu" if d == "auto" else d)
+    model.eval()
+    return model, preprocess_val, tokenizer
 
-def main():
-    args = parse_args()
-    cfg  = yaml.safe_load(open(args.config))
-    task = yaml.safe_load(open(args.task))
-    set_all(42)
-    device = choose_device(cfg["runtime"]["device"])
+@torch.no_grad()
+def main(args):
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    loader = make_loader(
-        root=cfg["dataset"]["root"],
-        images_rel_dir=cfg["dataset"]["images_dir"],
-        size=tuple(cfg["preprocess"]["size"]),
-        use_clahe=bool(cfg["preprocess"]["use_clahe"]),
-        mode=cfg["preprocess"]["mode"],
-        batch_size=int(cfg["runtime"]["batch_size"]),
-        num_workers=int(cfg["runtime"]["num_workers"])
-    )
+    with open(args.config, "r") as f:
+        cfg = yaml.safe_load(f)
 
-    model_id = "microsoft/BiomedCLIP-PubMedBERT_256-vit-base-224"
-    model = CLIPModel.from_pretrained(model_id).to(device).eval()
-    proc  = CLIPProcessor.from_pretrained(model_id)
+    # common dataset loader (expects cfg["dataset"] with base_dir, splits, etc.)
+    ds_paths = get_dataset_paths(cfg["dataset"], os.environ.get("DATA_DIR"))
+    loader = make_loader_from_cfg(cfg, split="test")  # or the split your task config defines
 
-    queries = task["task"]["labels"]  # ["frontal chest x-ray", "lateral chest x-ray"]
-    rows = [("image","p_frontal","p_lateral","pred","latency_sec")]
-    mem0 = gpu_mem_mb()
+    model, preprocess, tokenizer = build_biomedclip(device)
 
-    with torch.no_grad():
-        for names, batch_np in loader:
-            batch = torch.from_numpy(batch_np).to(device)
-            if batch.shape[1] == 1:
-                batch = batch.repeat(1,3,1,1)  # CLIP expects 3-channel
+    # Prompts (edit as desired)
+    texts = ["a chest x-ray, frontal view", "a chest x-ray, lateral view"]
+    text_tokens = tokenizer(texts).to(device)
 
-            for i, name in enumerate(names):
-                img_t = batch[i:i+1]  # (1,3,H,W)
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
 
-                # CLIPProcessor expects PIL or numpy by default; but it can take tensors
-                inputs = proc(text=queries, images=img_t, return_tensors="pt", padding=True)
-                inputs = {k: (v.to(device) if torch.is_tensor(v) else v) for k,v in inputs.items()}
+    with open(out_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["image", "p_frontal", "p_lateral", "pred"])
 
-                with wallclock() as t:
-                    out = model(**inputs)
-                dt = round(t(), 4)
+        for batch in loader:
+            # Expect batch["image_path"] or similar from your dataloader;
+            # adjust if your loader returns (img_tensor, label, meta)
+            images = batch["image"]  # tensor [B, C, H, W] from your loader
+            paths  = batch["image_path"]
+            images = images.to(device)
 
-                # logits_per_image: similarity of image to texts
-                probs = out.logits_per_image.softmax(dim=1)[0].tolist()
-                pred  = "frontal" if probs[0] >= probs[1] else "lateral"
-                rows.append((name, probs[0], probs[1], pred, dt))
+            # BioMedCLIP forward
+            # open-clip uses encode_image / encode_text
+            img_feats = model.encode_image(images)
+            txt_feats = model.encode_text(text_tokens)
 
-    out_csv = Path(args.out)
-    write_csv(rows, out_csv)
+            img_feats = img_feats / img_feats.norm(dim=-1, keepdim=True)
+            txt_feats = txt_feats / txt_feats.norm(dim=-1, keepdim=True)
 
-    write_json({
-        "script":"projection_biomedclip.py",
-        "git_commit": git_commit_short(),
-        "config_hash": config_hash(cfg),
-        "config": cfg, "task": task, "device": device,
-        "gpu_max_mem_mb": gpu_mem_mb() - mem0
-    }, out_csv.with_suffix(".json"))
-    print("✅ wrote:", out_csv)
+            # cosine sims -> softmax
+            logits = img_feats @ txt_feats.t()  # [B, 2]
+            probs = logits.softmax(dim=-1)      # [B, 2]
+
+            for pth, (pf, pl) in zip(paths, probs.tolist()):
+                pred = "frontal" if pf >= pl else "lateral"
+                writer.writerow([pth, f"{pf:.6f}", f"{pl:.6f}", pred])
+
+    print(f"✅ Wrote {out_path}")
 
 if __name__ == "__main__":
-    main()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--config", required=True)
+    ap.add_argument("--task", required=True)  # kept for symmetry; not used here
+    ap.add_argument("--out", required=True)
+    args = ap.parse_args()
+    main(args)
