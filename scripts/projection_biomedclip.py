@@ -12,22 +12,21 @@ Usage:
 import argparse, os, csv, torch
 from pathlib import Path
 import yaml
-
-# --- make repo importable when launched from anywhere ---
 import sys
+
+# --- Make repo importable when launched from anywhere ---
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from medvlm_core.dataloader import make_loader_from_cfg
-from medvlm_core.io import get_dataset_paths
-
+from medvlm_core.io import get_dataset_paths  # optional sanity only
 
 def build_biomedclip(device: str = "cuda"):
     """
     Load BioMedCLIP via open-clip.
-    Override via env:
+    Optional env overrides:
       BIOMEDCLIP_MODEL      (default: 'ViT-B-16')
       BIOMEDCLIP_PRETRAINED (default: 'biomed_clip')
-      BIOMEDCLIP_HF_REPO    (optional HF repo id if needed)
+      BIOMEDCLIP_HF_REPO    (e.g., 'microsoft/BiomedCLIP-PubMedBERT-base-uncased-ViT-B-16')
     """
     import open_clip
     model_name = os.getenv("BIOMEDCLIP_MODEL", "ViT-B-16")
@@ -46,7 +45,6 @@ def build_biomedclip(device: str = "cuda"):
     model.eval()
     return model, preprocess, tokenizer
 
-
 @torch.no_grad()
 def main(args):
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -61,15 +59,19 @@ def main(args):
         ds_cfg["base_dir"] = env_dir
     cfg["dataset"] = ds_cfg
 
-    # Validate/resolve dataset paths (returns dict; we don't strictly need it later)
-    # Optional: validate paths, but don't block if some keys (e.g., reports_csv) are absent for this task
+    # Optional: validate dataset paths but don't block if keys like reports_csv are absent
     try:
         _ = get_dataset_paths(cfg["dataset"])
     except Exception as e:
         print("⚠️ Skipping dataset path validation:", repr(e))
 
-    # Loader (split can be adjusted by your task if desired)
-    loader = make_loader_from_cfg(cfg, split="test")
+    # Build dataloader(s). Some versions return a dict of splits, others a single loader.
+    loaders = make_loader_from_cfg(cfg)
+    if isinstance(loaders, dict):
+        # Prefer 'test', else fall back to any available split.
+        loader = loaders.get("test") or next(iter(loaders.values()))
+    else:
+        loader = loaders
 
     # Model + text prompts
     model, preprocess, tokenizer = build_biomedclip(device)
@@ -128,7 +130,6 @@ def main(args):
                 writer.writerow([pth, f"{pf:.6f}", f"{pl:.6f}", pred])
 
     print(f"✅ Wrote {out_path}")
-
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
