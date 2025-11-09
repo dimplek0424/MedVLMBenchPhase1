@@ -67,6 +67,14 @@ pip install -r requirements.txt
 
 ---
 
+### 🛠️ Reproducibility/Environment
+
+- **Python dependencies are versioned in both `requirements.txt` (pip) and `requirements_kaggle.txt` (Kaggle).**
+- **For poetry/conda users:** see `pyproject.toml`, `poetry.lock`, or export your own `environment.yaml`.
+- All scripts and workflows are tested end-to-end for deterministic runs (patient-level split, fixed seeds, leak-free).
+
+---
+
 ### **4 — Directory Structure**
 
 ```
@@ -82,6 +90,16 @@ MedVLMBenchPhase1/
 ├── requirements.txt
 └── README.md
 ```
+
+---
+
+### 🚦 Modular Benchmarking
+
+- Each baseline (MedCLIP, BioMedCLIP, CheXzero, LLaVA-Med...) has:
+    - Config file(s) in `/configs`
+    - Dedicated script(s) in `/scripts` or `/notebooks`
+    - Output and metrics tracked in `/outputs`
+- New tasks (projection, pathology/disease labels, retrieval) can be added as modules; follow the structure of `medclip_demo.py` as a template.
 
 ---
 
@@ -160,9 +178,23 @@ If you build upon or reproduce this work, please provide proper attribution.
 
 ---
 
-## Learn More
+## 📖 Documentation & Workflows
 
-For extended methodology, dataset notes, and evaluation design:  
-📖 Read the detailed [**PROJECT_OVERVIEW.md**](PROJECT_OVERVIEW.md)
+- **Kaggle GPU Workflow:**  
+  Detailed steps to set up and reproduce experiments on Kaggle notebooks and environments.  
+  📄 [KAGGLE_WORKFLOW.md](KAGGLE_WORKFLOW.md)
+
+- **MedCLIP Benchmarking Workflow:**  
+  CLIP-faithful preprocessing, image handling, evaluation methodology, and experimental caveats.  
+  📄 [MedCLIP_WORKFLOW.md](MedCLIP_WORKFLOW.md) <!-- Add/rename if you use a different filename -->
+
+- **Project Overview:**  
+  Extended rationale, benchmarking registry, and vision for future work.  
+  📄 [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md)
+
+- **Exploratory Data Analysis Report:**  
+  Visual and statistical EDA on Indiana CXR data and splits.  
+  📄 [eda_indiana_chestxray.pdf](eda_indiana_chestxray.pdf)
+
 
 > Includes dataset registry, preprocessing flow, model configuration, and evaluation metrics.
