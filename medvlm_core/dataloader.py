@@ -1,112 +1,76 @@
-"""
-medvlm_core.dataloader
-----------------------
-PyTorch Dataset/DataLoader built on OpenCV utilities for CXR datasets.
-"""
+# medvlm_core/dataloader.py
+# Centralized data loading for IU CXR.
+# If clip_preprocess=True, we DO NOT resize/normalize here.
+# All CLIP transforms are applied in scripts/projection_medclip.py via CLIPProcessor.
 
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Tuple
-import numpy as np
+from typing import List, Tuple, Dict, Any
+
+import csv
+import os
+from PIL import Image
+import torch
 from torch.utils.data import Dataset, DataLoader
 
-from .io import imread, to_float01, resize
-from .transforms import clahe_gray01
+@dataclass
+class LoaderCfg:
+    batch_size: int = 32
+    num_workers: int = 2
+    prefetch_factor: int = 2
+    persistent_workers: bool = True
+    pin_memory: bool = True
+    clip_preprocess: bool = True
+    grayscale: bool = False
+    use_clahe: bool = False
+    img_size: int = 224
 
-import os
-from medvlm_core.io import get_dataset_paths
-
-class CXRDataset(Dataset):
+class IUChestXrayDataset(Dataset):
     """
-    Minimal dataset for IU Chest X-ray images.
-
-    Returns
-    -------
-    (filename, image_tensor_np)
-        filename: str
-        image_tensor_np: np.ndarray float32 in CHW format, normalized to [0,1]
+    Returns (PIL.Image (RGB), label:int, full_image_path:str).
+    If clip_preprocess=True -> DO NOT resize/normalize here.
     """
-    def __init__(
-        self,
-        root: str | Path,
-        images_rel_dir: str,          # e.g., "images/images_normalized"
-        size: Tuple[int, int] = (224, 224),
-        use_clahe: bool = True,
-        mode: str = "gray"            # "gray" (1ch) or "rgb" (3ch)
-    ):
-        self.root = Path(root)
-        self.dir = self.root / images_rel_dir
-        self.paths = sorted(self.dir.glob("*.png"))
-        self.size, self.use_clahe, self.mode = size, use_clahe, mode
+    def __init__(self, image_paths: List[str], labels: List[int], cfg: LoaderCfg):
+        assert len(image_paths) == len(labels), "images and labels length mismatch"
+        self.paths = image_paths
+        self.labels = labels
+        self.cfg = cfg
 
-        if not self.paths:
-            raise FileNotFoundError(f"No PNGs found under: {self.dir}")
+    def __len__(self) -> int:
+        return len(self.paths)
 
-    def __len__(self): return len(self.paths)
+    def _read_rgb(self, p: str) -> Image.Image:
+        img = Image.open(p)
+        if img.mode != "RGB":  # many CXRs are single-channel or 'L'
+            img = img.convert("RGB")
+        return img
 
     def __getitem__(self, idx: int):
-        p = self.paths[idx]
-        img = imread(p, mode=("gray" if self.mode == "gray" else "rgb"))
-        img = to_float01(img)
-        if self.use_clahe and self.mode == "gray":
-            img = clahe_gray01(img)
+        path = self.paths[idx]
+        label = self.labels[idx]
+        img = self._read_rgb(path)
 
-        img = resize(img, self.size)  # (H,W) or (H,W,3)
+        # IMPORTANT: when clip_preprocess=True, all resizing/normalizing happens later.
+        if self.cfg.clip_preprocess:
+            return img, label, path
 
-        # Convert to CHW float32 for PyTorch compatibility
-        if img.ndim == 2:  # gray → (1,H,W)
-            img = img[None, ...]
-        else:              # rgb → (3,H,W)
-            img = np.transpose(img, (2, 0, 1))
-
-        return p.name, img.astype("float32")
+        # Legacy branch: keep image as RGB; if you ever add transforms here,
+        # ensure they are mutually exclusive with CLIPProcessor usage.
+        return img, label, path
 
 
-def make_loader(
-    root: str | Path,
-    images_rel_dir: str,
-    size: Tuple[int, int],
-    use_clahe: bool,
-    mode: str,
-    batch_size: int,
-    num_workers: int
+def make_loader_from_cfg(
+    image_paths: List[str],
+    labels: List[int],
+    loader_cfg: Dict[str, Any],
 ) -> DataLoader:
-    """
-    Factory to build a non-shuffling DataLoader for deterministic evaluation.
-    """
-    ds = CXRDataset(root, images_rel_dir, size=size, use_clahe=use_clahe, mode=mode)
+    cfg = LoaderCfg(**loader_cfg)
+    ds = IUChestXrayDataset(image_paths, labels, cfg)
     return DataLoader(
-        ds, batch_size=batch_size, shuffle=False,
-        num_workers=num_workers, pin_memory=True
-    )
-
-def make_loader_from_cfg(cfg) -> DataLoader:
-    """
-    Convenience wrapper: builds a DataLoader directly from the YAML config.
-    It resolves paths via get_dataset_paths(cfg) and uses loader settings.
-    """
-    paths = get_dataset_paths(cfg)
-
-    # loader settings with safe defaults
-    loader_cfg = cfg.get("loader", {})
-    img_size = int(loader_cfg.get("img_size", 224))
-    batch_size = int(loader_cfg.get("batch_size", 32))
-    num_workers = int(loader_cfg.get("num_workers", 2))
-    grayscale = bool(loader_cfg.get("grayscale", True))
-    mode = "gray" if grayscale else "rgb"
-    use_clahe = True  # keep your current behavior; adjust if you have a cfg flag
-
-    # Prefer a relative path if images_dir is inside base_dir; else keep absolute
-    try:
-        images_rel = os.path.relpath(paths["images_dir"], start=paths["base_dir"])
-    except Exception:
-        images_rel = paths["images_dir"]
-
-    return make_loader(
-        root=paths["base_dir"],
-        images_rel_dir=images_rel,
-        size=(img_size, img_size),
-        use_clahe=use_clahe,
-        mode=mode,
-        batch_size=batch_size,
-        num_workers=num_workers
+        ds,
+        batch_size=cfg.batch_size,
+        num_workers=cfg.num_workers,
+        prefetch_factor=cfg.prefetch_factor,
+        persistent_workers=cfg.persistent_workers,
+        pin_memory=cfg.pin_memory,
     )

@@ -3,13 +3,21 @@ dataset:
   base_dir: "D:/MedVLMPhase1/data/chestxray_iu"
   images_subdir: "images/images_normalized"
   reports_csv: "indiana_reports.csv"
-  projections_csv: "indiana_projections.csv"
+  projections_csv: "indiana_projections.csv"  # has image filename + view label
 
 loader:
-  img_size: 224
+  # CLIP-faithful path (single source of truth done in projection_medclip.py)
   batch_size: 32
   num_workers: 2
-  grayscale: true
+  prefetch_factor: 2
+  persistent_workers: true
+  pin_memory: true
+
+  # critical switches (used by dataloader.py)
+  clip_preprocess: true    # let CLIPProcessor do resize/crop/normalize
+  grayscale: false         # force 3-channel RGB input
+  use_clahe: false         # baseline OFF
+  img_size: 224            # documented only; ignored when clip_preprocess=true
 
 output:
   dir: "D:/MedVLMPhase1/outputs"
@@ -20,4 +28,4 @@ logging:
   save_plots: true
 
 runtime:
-  device: "auto"
+  device: "auto"    # "cuda" | "cpu" | "auto"

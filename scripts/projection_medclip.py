@@ -1,226 +1,242 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+# scripts/projection_medclip.py
+"""
+MedCLIP projection benchmark (frontal vs lateral) with CLIP-faithful preprocessing.
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Projection-type benchmark (frontal vs lateral) using MedCLIP on FULL IU dataset
-#
-# Run from repo root (Kaggle or local):
-#   python scripts/projection_medclip.py \
-#       --config configs/dataset_iu_v03_full.yaml \
-#       --task   configs/task_projection_v01.yaml \
-#       --out    results/projection/iu_v03_full_medclip.csv
-#
-# Output:
-#   - CSV  : image,p_frontal,p_lateral,pred,latency_sec
-#   - JSON : manifest (config hash, git commit, device, GPU mem delta)
-#
-# Design notes:
-#   • We avoid Hugging Face auth/gated models entirely. MedCLIP’s own
-#     `from_pretrained()` (no args) downloads weights from GCS.
-#   • We patch torch.load → map_location="cpu" during weight load to avoid
-#     CUDA incompatibility on Kaggle; then move the model to device.
-#   • We use HF AutoTokenizer + CLIPProcessor explicitly instead of the
-#     MedCLIPProcessor (more stable across versions).
-#   • Data comes from your medvlm_core DataLoader (float[0,1], CHW).
-#     We convert each sample to HWC uint8 RGB before CLIPProcessor.
-# ──────────────────────────────────────────────────────────────────────────────
+- Reads dataset config (paths + CSVs) and loader config.
+- Enumerates IU-CXR images via projections CSV (expects columns: image, view).
+- Builds absolute paths: base_dir / images_subdir / <image>
+- DataLoader returns raw RGB PIL images; CLIPProcessor applies resize/crop/normalize (224).
+- Zero-shot: two prompts → cosine-sim logits → softmax → p_frontal/p_lateral.
+- Writes CSV: [image, p_frontal, p_lateral, pred]
 
-# -- Make repo root importable so "medvlm_core.*" works when run as a script
-import sys, pathlib
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+Usage (local):
+  python scripts/projection_medclip.py \
+    --config configs/dataset_iu_v03_full.yaml \
+    --out    D:/MedVLMPhase1/outputs/projection/iu_v03_medclip.csv
+
+Usage (Kaggle):
+  export DATA_DIR=/kaggle/input/chest-xrays-indiana-university
+  export OUTPUT_DIR=/kaggle/working/outputs
+  python scripts/projection_medclip.py \
+    --config configs/dataset_iu_v03_full.kaggle.yaml \
+    --out    $OUTPUT_DIR/projection/iu_v03_medclip.csv
+"""
 
 import argparse
+import csv
+import json
+import os
+import random
+import time
 from pathlib import Path
-import yaml
+from typing import Dict, List, Tuple
+
 import numpy as np
 import torch
+from transformers import CLIPModel, CLIPProcessor
 
-# Only MedCLIPModel needed (NOT MedCLIPProcessor)
-from medclip import MedCLIPModel
-
-# Use HF components explicitly
-from transformers import AutoTokenizer, CLIPProcessor
-
-# repo utilities
-from medvlm_core.seeds import set_all
 from medvlm_core.dataloader import make_loader_from_cfg
-from medvlm_core.logging import write_csv, write_json, git_commit_short, config_hash
-from medvlm_core.timer import wallclock, gpu_mem_mb
+
+try:
+    import yaml
+    _HAVE_YAML = True
+except Exception:
+    _HAVE_YAML = False
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Helpers
-# ──────────────────────────────────────────────────────────────────────────────
+# ---------------------------
+# IO helpers
+# ---------------------------
+def load_cfg(path: str) -> Dict:
+    if path.endswith(".json"):
+        with open(path, "r") as f:
+            return json.load(f)
+    if path.endswith(".yaml") or path.endswith(".yml"):
+        if not _HAVE_YAML:
+            raise RuntimeError("Please install pyyaml to use YAML configs.")
+        with open(path, "r") as f:
+            return yaml.safe_load(f)
+    raise ValueError(f"Unsupported config format: {path}")
 
-def chw01_to_hwc_uint8(img_chw_float01: torch.Tensor) -> np.ndarray:
+
+def getenv_or_literal(value: str) -> str:
+    """Expands ${ENV} in config values if present."""
+    if value is None:
+        return value
+    v = str(value)
+    if v.startswith("${") and v.endswith("}"):
+        env_name = v[2:-1]
+        return os.environ.get(env_name, "")
+    return v
+
+
+def build_image_list(cfg: Dict) -> Tuple[List[str], List[int]]:
     """
-    Convert a single image from (C,H,W) float32 in [0,1] → (H,W,3) uint8 RGB.
-
-    Why:
-      CLIPProcessor expects PIL/HWC uint8 or similar; our loader gives CHW [0,1].
+    Reads projections_csv; expects columns: image, view
+    - view ∈ {frontal, lateral, AP, PA, LATERAL} (we map to {0,1})
+    Returns absolute image paths and integer labels: 0=frontal, 1=lateral
     """
-    arr = img_chw_float01.detach().cpu().numpy().transpose(1, 2, 0)  # CHW → HWC
-    arr = np.clip(arr * 255.0, 0, 255).astype("uint8")
-    return arr
+    ds = cfg["dataset"]
+    base_dir = Path(getenv_or_literal(ds["base_dir"]))
+    images_subdir = ds["images_subdir"]
+    projections_csv = ds["projections_csv"]
+
+    csv_path = base_dir / projections_csv
+    images_root = base_dir / images_subdir
+
+    if not csv_path.exists():
+        raise FileNotFoundError(f"projections_csv not found: {csv_path}")
+    if not images_root.exists():
+        raise FileNotFoundError(f"images_subdir not found: {images_root}")
+
+    paths: List[str] = []
+    labels: List[int] = []
+
+    with open(csv_path, "r", newline="") as f:
+        reader = csv.DictReader(f)
+        # tolerate different header casings
+        cols = {k.lower(): k for k in reader.fieldnames or []}
+        img_col = cols.get("image") or cols.get("img") or cols.get("filename") or None
+        view_col = cols.get("view") or cols.get("projection") or None
+        if not img_col or not view_col:
+            raise ValueError("projections_csv must have columns like {image, view}")
+
+        for row in reader:
+            rel = row[img_col].strip()
+            view = row[view_col].strip().lower()
+            # Normalize common synonyms
+            if view in ("frontal", "ap", "pa"):
+                y = 0
+            elif view in ("lateral", "lat"):
+                y = 1
+            else:
+                # skip unknown labels
+                continue
+            full = images_root / rel
+            if full.exists():
+                paths.append(str(full))
+                labels.append(y)
+
+    if len(paths) == 0:
+        raise RuntimeError("No images matched from projections_csv; check paths/columns.")
+
+    return paths, labels
 
 
-def choose_device(device_cfg: str) -> str:
-    """Resolve 'auto' to 'cuda' when available; otherwise return given cfg."""
-    if device_cfg == "auto":
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    return device_cfg
-
-
-def tolerant_load_medclip() -> MedCLIPModel:
+# ---------------------------
+# Collate: CLIPProcessor
+# ---------------------------
+def make_collate_fn(processor: CLIPProcessor):
     """
-    Load MedCLIP while:
-      1) forcing torch.load to map to CPU (works on Kaggle),
-      2) temporarily making load_state_dict(strict=False) to ignore unexpected keys
-         like 'text_model.model.embeddings.position_ids'.
-    Both patches are restored after loading.
+    Input batch is a list of tuples: (PIL.Image (RGB), label:int, path:str)
+    Returns: pixel_values [B,3,224,224], labels [B], paths [B]
     """
-    model = MedCLIPModel()
-
-    # Keep originals so we can restore after loading
-    orig_torch_load = torch.load
-    orig_load_state_dict = torch.nn.Module.load_state_dict
-
-    # 1) Ensure CPU map_location during internal torch.load()
-    def _cpu_load(*args, **kwargs):
-        kwargs.setdefault("map_location", torch.device("cpu"))
-        return orig_torch_load(*args, **kwargs)
-
-    # 2) Force strict=False just during checkpoint restore
-    def _tolerant_load_state_dict(self, state_dict, strict=True):
-        # ignore 'strict' argument; always load with strict=False
-        return orig_load_state_dict(self, state_dict, strict=False)
-
-    # Apply patches
-    torch.load = _cpu_load
-    torch.nn.Module.load_state_dict = _tolerant_load_state_dict
-
-    try:
-        # medclip internally downloads and calls .load_state_dict(...)
-        # Our patch above lets it ignore unexpected keys cleanly.
-        model.from_pretrained()
-    finally:
-        # Always restore
-        torch.load = orig_torch_load
-        torch.nn.Module.load_state_dict = orig_load_state_dict
-
-    return model
+    def _collate(batch):
+        imgs, labels, paths = zip(*batch)
+        proc = processor(images=list(imgs), return_tensors="pt")
+        pixel_values = proc["pixel_values"]  # [B,3,224,224], CLIP mean/std in place
+        labels = torch.tensor(labels, dtype=torch.long)
+        return pixel_values, labels, list(paths)
+    return _collate
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Main
-# ──────────────────────────────────────────────────────────────────────────────
-
+# ---------------------------
+# CLI
+# ---------------------------
 def parse_args():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", required=True, help="YAML config (dataset, loader, runtime)")
-    ap.add_argument("--task",   required=True, help="YAML task spec (contains 'task.labels')")
-    ap.add_argument("--out",    required=True, help="Output CSV path")
+    ap.add_argument("--config", required=True, help="dataset YAML/JSON")
+    ap.add_argument("--out", required=True, help="output CSV path")
     return ap.parse_args()
 
 
-def main():
+# ---------------------------
+# Main
+# ---------------------------
+if __name__ == "__main__":
     args = parse_args()
-    cfg  = yaml.safe_load(open(args.config, "r"))
-    task = yaml.safe_load(open(args.task,   "r"))
 
-    # Repro, device
-    set_all(42)
-    device = choose_device(cfg.get("runtime", {}).get("device", "auto"))
+    # seeds for reproducibility
+    random.seed(42)
+    np.random.seed(42)
+    torch.manual_seed(42)
 
-    # Data: your convenience wrapper uses get_dataset_paths() internally
-    loader = make_loader_from_cfg(cfg)
+    cfg = load_cfg(args.config)
+    loader_cfg = cfg.get("loader", {})
+    out_csv_path = Path(getenv_or_literal(args.out))
+    out_csv_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Model: load on CPU, then move to device
-    model = tolerant_load_medclip().to(device).eval()
+    # Build image list + integer labels from projections CSV
+    image_paths, labels = build_image_list(cfg)
 
-    # Tokenizer (text) + image processor (vision)
-    tokenizer     = AutoTokenizer.from_pretrained("emilyalsentzer/Bio_ClinicalBERT")
-    img_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch16")
+    # Prepare model and processor (CLIP ViT-B/16 → matches MedCLIP vision preprocessing)
+    model_name = "openai/clip-vit-base-patch16"
+    processor = CLIPProcessor.from_pretrained(model_name)
+    model = CLIPModel.from_pretrained(model_name).eval()
 
-    # Two class prompts, e.g. ["frontal chest x-ray", "lateral chest x-ray"]
-    queries = task["task"]["labels"]
+    # Device handling
+    dev_pref = (cfg.get("runtime") or {}).get("device", "auto")
+    if dev_pref == "cuda" or (dev_pref == "auto" and torch.cuda.is_available()):
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+    model = model.to(device)
 
-    # Results table
-    rows = [("image", "p_frontal", "p_lateral", "pred", "latency_sec")]
-    mem0 = gpu_mem_mb()
+    # DataLoader (dataset returns raw RGB; processor runs in collate)
+    loader = make_loader_from_cfg(image_paths, labels, loader_cfg)
+    loader.collate_fn = make_collate_fn(processor)
+
+    # Pre-encode text prompts once (zero-shot)
+    prompt_texts = [
+        "a frontal chest x-ray radiograph",
+        "a lateral chest x-ray radiograph",
+    ]
+    text_inputs = processor(text=prompt_texts, padding=True, return_tensors="pt").to(device)
+
+    # Speed knob: autotune convolution algorithms for fixed 224×224
+    if device.type == "cuda":
+        torch.backends.cudnn.benchmark = True
+
+    # Inference loop
+    rows = []
+    n = 0
+    t0 = time.time()
+
+    # Use AMP on GPU for speed
+    amp_ctx = torch.cuda.amp.autocast if device.type == "cuda" else torch.cpu.amp.autocast
+    amp_dtype = torch.float16 if device.type == "cuda" else torch.bfloat16
 
     with torch.no_grad():
-        for names, batch_np in loader:
-            # DataLoader may return numpy or torch tensors; normalize to torch.Tensor
-            batch = batch_np if isinstance(batch_np, torch.Tensor) else torch.from_numpy(batch_np)
-            batch = batch.to(device)
+        for pixel_values, y, paths in loader:
+            pixel_values = pixel_values.to(device, non_blocking=True)
 
-            # Ensure 3 channels for CLIP (RGB)
-            if batch.shape[1] == 1:
-                batch = batch.repeat(1, 3, 1, 1)
+            if n == 0:
+                print(f"[sanity] pixel_values.shape={tuple(pixel_values.shape)} (expect [B,3,224,224])")
 
-            # Process images one-by-one (keeps code simple & robust)
-            for i, name in enumerate(names):
-                # CHW [0,1] → HWC uint8
-                img_np = chw01_to_hwc_uint8(batch[i])
+            with amp_ctx(dtype=amp_dtype):
+                image_features = model.get_image_features(pixel_values=pixel_values)
+                text_features = model.get_text_features(**text_inputs)
+                # cosine-sim style logits
+                image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+                text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+                logits = image_features @ text_features.t()  # [B,2]
+                probs = torch.softmax(logits, dim=-1)        # [:,0]=frontal, [:,1]=lateral
 
-                # 1) Text inputs (labels as prompts)
-                text_inputs = tokenizer(queries, padding=True, return_tensors="pt")
+            probs_np = probs.detach().float().cpu().numpy()
+            for i, p in enumerate(paths):
+                rows.append({
+                    "image": p,
+                    "p_frontal": float(probs_np[i, 0]),
+                    "p_lateral": float(probs_np[i, 1]),
+                    "pred": "frontal" if probs_np[i, 0] >= probs_np[i, 1] else "lateral",
+                })
+            n += len(paths)
 
-                # 2) Image inputs (CLIP normalization, resize, etc.)
-                img_inputs = img_processor(images=img_np, return_tensors="pt")
+    # Write CSV
+    with open(out_csv_path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=["image", "p_frontal", "p_lateral", "pred"])
+        w.writeheader()
+        w.writerows(rows)
 
-                # 3) Merge and move to device
-                inputs = {**text_inputs, **img_inputs}
-                inputs = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in inputs.items()}
-
-                # Forward pass & timing
-                with wallclock() as t:
-                    out = model(**inputs)
-                dt = round(t(), 4)
-
-                # 1) Try the OpenAI-CLIP-style key
-                logits = None
-                if isinstance(out, dict) and "logits_per_image" in out:
-                    logits = out["logits_per_image"]
-                elif hasattr(out, "logits_per_image"):
-                    logits = out.logits_per_image
-
-                # 2) Fallback: compute logits from embeddings
-                if logits is None:
-                    # Many MedCLIP builds expose encode_image / encode_text
-                    # pixel_values: (1,3,H,W); input_ids/attention_mask: text tokens for 2 prompts
-                    img_emb = model.encode_image(pixel_values=inputs["pixel_values"])
-                    txt_emb = model.encode_text(
-                        input_ids=inputs["input_ids"],
-                        attention_mask=inputs.get("attention_mask")
-                    )
-                    # normalize then cosine-sim = dot product
-                    img_emb = img_emb / (img_emb.norm(dim=-1, keepdim=True) + 1e-9)
-                    txt_emb = txt_emb / (txt_emb.norm(dim=-1, keepdim=True) + 1e-9)
-                    logits = img_emb @ txt_emb.T  # shape [1, 2]
-
-                probs = logits.softmax(dim=1)[0].tolist()  # [p_frontal, p_lateral]
-                pred  = "frontal" if probs[0] >= probs[1] else "lateral"
-                rows.append((name, probs[0], probs[1], pred, dt))
-
-    # Write outputs
-    out_csv = Path(args.out)
-    out_csv.parent.mkdir(parents=True, exist_ok=True)  # defensive
-    write_csv(rows, out_csv)
-
-    manifest = {
-        "script": "projection_medclip.py",
-        "git_commit": git_commit_short(),
-        "config_hash": config_hash(cfg),
-        "config": cfg,
-        "task": task,
-        "device": device,
-        "gpu_max_mem_mb": gpu_mem_mb() - mem0
-    }
-    write_json(manifest, out_csv.with_suffix(".json"))
-    print("✅ wrote:", out_csv)
-
-
-if __name__ == "__main__":
-    main()
+    dt = time.time() - t0
+    print(f"[done] wrote: {out_csv_path} | rows={n} | wall={dt:.2f}s")

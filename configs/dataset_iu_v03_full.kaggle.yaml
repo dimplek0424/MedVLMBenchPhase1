@@ -1,0 +1,31 @@
+dataset:
+  name: iu_chestxray
+  # In Kaggle, we derive base_dir from $DATA_DIR (set in notebook)
+  base_dir: "${DATA_DIR}"
+  images_subdir: "images/images_normalized"
+  reports_csv: "indiana_reports.csv"
+  projections_csv: "indiana_projections.csv"
+
+loader:
+  batch_size: 64            # safe start on P100; drop to 32 if OOM
+  num_workers: 2
+  prefetch_factor: 2
+  persistent_workers: true
+  pin_memory: true
+
+  clip_preprocess: true
+  grayscale: false
+  use_clahe: false
+  img_size: 224
+
+output:
+  # In Kaggle, write to $OUTPUT_DIR
+  dir: "${OUTPUT_DIR}"
+
+logging:
+  level: INFO
+  save_metrics: true
+  save_plots: true
+
+runtime:
+  device: "auto"
