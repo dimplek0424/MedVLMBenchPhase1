@@ -1,66 +1,40 @@
 #!/usr/bin/env python3
 """
-Evaluate projection-type classifier outputs (e.g., frontal vs lateral) from MedCLIP or similar models.
+Evaluate projection-type outputs (frontal vs lateral) from MedCLIP-style runs.
 
-This script reads a CSV of per-image probabilities and predictions, 
-computes accuracy, ROC/PR curves, calibration (ECE), pairwise cosine-similarity, 
-and a 2D visualization (UMAP or t-SNE).
+Reads a CSV with columns:
+  image, p_frontal, p_lateral, pred
+Joins with IU-CXR ground truth at:
+  <data_dir>/indiana_projections.csv
+…tolerating header variants {filename|image|image index|path} and {projection|view|view position}.
 
-Typical usage (after running MedCLIP projection):
--------------------------------------------------
-python scripts/evaluate_views.py \
-  --csv results/projection/iu_v03_full_medclip.csv \
-  --outdir results/eval/medclip \
-  --col_image image --col_p1 p_frontal --col_p2 p_lateral \
-  --col_pred pred --label1 frontal --label2 lateral
+Saves:
+  confusion_matrix.png, roc.png, pr.png, calibration_bins.csv, summary.json
+
+Example (Kaggle):
+  python scripts/evaluate_views.py \
+    --csv     $OUTPUT_DIR/projection/iu_v03_medclip.csv \
+    --data_dir $DATA_DIR \
+    --outdir  $OUTPUT_DIR/eval_medclip
 """
 
-import argparse, os, pathlib, json
+import argparse, os, json, pathlib
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.metrics import (
-    confusion_matrix, ConfusionMatrixDisplay,
-    roc_auc_score, roc_curve, precision_recall_curve
+    accuracy_score, roc_auc_score, average_precision_score,
+    confusion_matrix, RocCurveDisplay, PrecisionRecallDisplay
 )
 
-# Try to import UMAP (if unavailable, fall back to t-SNE)
-HAS_UMAP = True
-try:
-    import umap
-except Exception:
-    HAS_UMAP = False
-from sklearn.manifold import TSNE
-
-
-# ---------------------------------------------------------------------------
-# 📏 ECE (Expected Calibration Error)
-# ---------------------------------------------------------------------------
+# ------------------------------
+# ECE (Expected Calibration Error)
+# ------------------------------
 def ece(probs, correct, n_bins=10):
-    """
-    Compute Expected Calibration Error for a binary classifier.
-
-    Parameters:
-    -----------
-    probs   : array-like, shape (N,)
-              Confidence scores of the predicted class.
-    correct : array-like, shape (N,)
-              1 if the prediction is correct, else 0.
-    n_bins  : int
-              Number of equal-width bins across [0,1].
-
-    Returns:
-    --------
-    ece_val : float
-        Weighted mean calibration gap.
-    df      : pd.DataFrame
-        Per-bin statistics for calibration plotting.
-    """
     probs = np.asarray(probs, dtype=float)
     correct = np.asarray(correct, dtype=int)
     bins = np.linspace(0, 1, n_bins + 1)
     ece_val, rows = 0.0, []
-
     for i in range(n_bins):
         lo, hi = bins[i], bins[i + 1]
         mask = (probs >= lo) & (probs < hi if i < n_bins - 1 else probs <= hi)
@@ -71,153 +45,120 @@ def ece(probs, correct, n_bins=10):
         acc_mean = float(correct[mask].mean())
         ece_val += float(mask.mean()) * abs(conf_mean - acc_mean)
         rows.append((lo, hi, int(mask.sum()), conf_mean, acc_mean))
-
     df = pd.DataFrame(rows, columns=["bin_lo", "bin_hi", "count", "conf_mean", "acc_mean"])
-    return ece_val, df
+    return float(ece_val), df
 
 
-# ---------------------------------------------------------------------------
-# 🚀 MAIN FUNCTION
-# ---------------------------------------------------------------------------
+def map_view(v: str) -> int | None:
+    v = str(v).strip().lower()
+    if v in {"frontal", "ap", "pa"}: return 0
+    if v in {"lateral", "lat"}:      return 1
+    return None
+
+
+def load_joined(csv_pred: str, data_dir: str) -> pd.DataFrame:
+    """Returns df with columns: image, p_frontal, p_lateral, pred, label (0/1)."""
+    preds = pd.read_csv(csv_pred).copy()
+    if not {"image", "p_frontal", "p_lateral", "pred"}.issubset(preds.columns):
+        raise ValueError(f"Expected columns [image,p_frontal,p_lateral,pred] in {csv_pred}")
+    preds["fname"] = preds["image"].apply(lambda p: os.path.basename(str(p)).strip())
+
+    gt_csv = os.path.join(data_dir, "indiana_projections.csv")
+    gt = pd.read_csv(gt_csv).copy()
+    cols = {c.lower(): c for c in gt.columns}
+    img_col  = cols.get("filename") or cols.get("image") or cols.get("image index") or cols.get("path")
+    view_col = cols.get("projection") or cols.get("view") or cols.get("view position")
+    if not img_col or not view_col:
+        raise ValueError(f"Unexpected GT columns in {gt_csv}: {gt.columns.tolist()}")
+
+    gt["fname"] = gt[img_col].astype(str).apply(lambda p: os.path.basename(p).strip())
+    gt["label"] = gt[view_col].map(map_view)
+    gt = gt.dropna(subset=["label"]).copy()
+    gt["label"] = gt["label"].astype(int)
+
+    df = preds.merge(gt[["fname", "label"]], on="fname", how="inner")
+    return df
+
+
 def main():
-    ap = argparse.ArgumentParser(description="Evaluate MedCLIP-like binary projection classifier results.")
-    ap.add_argument("--csv", required=True, help="Input CSV containing predictions and probabilities.")
-    ap.add_argument("--col_image", default="image", help="Image filename column.")
-    ap.add_argument("--col_p1", default="p_frontal", help="Probability column for class #1 (e.g., frontal).")
-    ap.add_argument("--col_p2", default="p_lateral", help="Probability column for class #2 (e.g., lateral).")
-    ap.add_argument("--col_pred", default="pred", help="Predicted label column.")
-    ap.add_argument("--col_label", default="", help="Ground-truth label column (if empty, use heuristic).")
-    ap.add_argument("--label1", default="frontal", help="Name for class 1.")
-    ap.add_argument("--label2", default="lateral", help="Name for class 2.")
-    ap.add_argument("--outdir", default="results/eval/medclip", help="Directory to save plots and outputs.")
-    ap.add_argument("--sample_sim", type=int, default=50, help="Subset size for cosine-similarity & embeddings.")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--csv", required=True, help="Predictions CSV path.")
+    ap.add_argument("--data_dir", default=os.environ.get("DATA_DIR", ""), help="Dataset root containing indiana_projections.csv")
+    ap.add_argument("--outdir", required=True, help="Directory to save artifacts.")
+    ap.add_argument("--positive", default="lateral", choices=["lateral", "frontal"], help="Which class is positive for ROC/PR.")
     args = ap.parse_args()
 
-    # Ensure output folder exists
     outdir = pathlib.Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    # -----------------------------------------------------------------------
-    # 🧾 LOAD CSV + sanity checks
-    # -----------------------------------------------------------------------
-    df = pd.read_csv(args.csv)
-    for col in [args.col_image, args.col_p1, args.col_p2, args.col_pred]:
-        if col not in df.columns:
-            raise ValueError(f"Missing column '{col}' in {args.csv}")
+    if not args.data_dir:
+        raise ValueError("Please provide --data_dir or set DATA_DIR environment variable.")
 
-    # -----------------------------------------------------------------------
-    # 🧩 Handle Ground-Truth (heuristic if missing)
-    # -----------------------------------------------------------------------
-    if not args.col_label or args.col_label not in df.columns:
-        # Simple heuristic: images containing "-1001" are frontal
-        df["label"] = np.where(
-            df[args.col_image].astype(str).str.contains("-1001"),
-            args.label1, args.label2
-        )
-        col_label = "label"
+    # Join preds with ground truth
+    df = load_joined(args.csv, args.data_dir)
+
+    # Prepare targets/scores
+    # label: 0=frontal,1=lateral
+    y_true = df["label"].values
+    p_lat  = df["p_lateral"].astype(float).values
+    p_fro  = df["p_frontal"].astype(float).values
+    if args.positive == "lateral":
+        y_score = p_lat
     else:
-        col_label = args.col_label
+        y_score = p_fro
 
-    # Convert to numeric arrays for metrics
-    y_true = (df[col_label] == args.label1).astype(int).to_numpy()
-    y_pred = (df[args.col_pred] == args.label1).astype(int).to_numpy()
-    p1 = df[args.col_p1].astype(float).to_numpy()
-    p2 = df[args.col_p2].astype(float).to_numpy()
+    y_pred = (p_lat >= p_fro).astype(int)
 
-    # -----------------------------------------------------------------------
-    # 📉 Confusion Matrix
-    # -----------------------------------------------------------------------
-    cm = confusion_matrix(df[col_label], df[args.col_pred], labels=[args.label1, args.label2])
-    fig = plt.figure(figsize=(4, 4))
-    ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=[args.label1, args.label2]).plot(
-        values_format="d", cmap="Blues", ax=plt.gca(), colorbar=False
-    )
-    plt.title("Confusion Matrix")
+    # Metrics
+    acc   = accuracy_score(y_true, y_pred)
+    auroc = roc_auc_score(y_true, y_score)
+    aupr  = average_precision_score(y_true, y_score)
+    cm    = confusion_matrix(y_true, y_pred, labels=[0, 1])
+
+    print(f"rows={len(df)}  acc={acc:.4f}  auroc={auroc:.4f}  aupr={aupr:.4f}")
+    print("Confusion matrix [rows=true 0,1; cols=pred 0,1]:\n", cm)
+
+    # Save confusion matrix
+    plt.figure(figsize=(4, 4))
+    plt.imshow(cm, interpolation="nearest")
+    plt.title("Confusion Matrix (0=frontal,1=lateral)")
+    plt.xlabel("Predicted"); plt.ylabel("True")
+    for (i, j), v in np.ndenumerate(cm):
+        plt.text(j, i, str(v), ha="center", va="center")
     plt.tight_layout()
-    fig.savefig(outdir / "confusion_matrix.png", dpi=160)
-    plt.close(fig)
+    plt.savefig(outdir / "confusion_matrix.png", dpi=150)
+    plt.close()
 
-    # -----------------------------------------------------------------------
-    # 📈 ROC & PR Curves
-    # -----------------------------------------------------------------------
-    auc = roc_auc_score(y_true, p1)
-    fpr, tpr, _ = roc_curve(y_true, p1)
-    pre, rec, _ = precision_recall_curve(y_true, p1)
+    # ROC & PR
+    RocCurveDisplay.from_predictions(y_true, y_score)
+    plt.title(f"ROC (pos={args.positive})")
+    plt.tight_layout()
+    plt.savefig(outdir / "roc.png", dpi=150)
+    plt.close()
 
-    plt.figure(figsize=(4, 4))
-    plt.plot(fpr, tpr, label=f"AUC={auc:.3f}")
-    plt.plot([0, 1], [0, 1], "--", color="gray")
-    plt.xlabel("False Positive Rate"); plt.ylabel("True Positive Rate")
-    plt.legend(); plt.title("ROC Curve"); plt.tight_layout()
-    plt.savefig(outdir / "roc.png", dpi=160); plt.close()
+    PrecisionRecallDisplay.from_predictions(y_true, y_score)
+    plt.title(f"PR (pos={args.positive})")
+    plt.tight_layout()
+    plt.savefig(outdir / "pr.png", dpi=150)
+    plt.close()
 
-    plt.figure(figsize=(4, 4))
-    plt.plot(rec, pre)
-    plt.xlabel("Recall"); plt.ylabel("Precision")
-    plt.title("Precision-Recall Curve"); plt.tight_layout()
-    plt.savefig(outdir / "pr.png", dpi=160); plt.close()
-
-    # -----------------------------------------------------------------------
-    # 📏 Calibration (ECE)
-    # -----------------------------------------------------------------------
-    conf_pred = np.maximum(p1, p2)  # confidence of predicted class
-    correct = (df[args.col_pred] == df[col_label]).astype(int).to_numpy()
-    ece_val, ece_df = ece(conf_pred, correct, n_bins=10)
+    # Calibration (ECE) using confidence of predicted class
+    conf = np.maximum(p_lat, p_fro)
+    correct = (y_pred == y_true).astype(int)
+    ece_val, ece_df = ece(conf, correct, n_bins=10)
     ece_df.to_csv(outdir / "calibration_bins.csv", index=False)
 
-    # -----------------------------------------------------------------------
-    # 🔍 Pairwise Cosine Similarity + Embeddings
-    # -----------------------------------------------------------------------
-    sub = df.sample(min(args.sample_sim, len(df)), random_state=42).reset_index(drop=True)
-    V = sub[[args.col_p1, args.col_p2]].to_numpy(dtype=float)
-
-    # Normalize each vector, compute cosine similarity matrix
-    Vn = V / (np.linalg.norm(V, axis=1, keepdims=True) + 1e-9)
-    S = Vn @ Vn.T
-    pd.DataFrame(S, index=sub[args.col_image], columns=sub[args.col_image]).to_csv(
-        outdir / "pairwise_cosine_similarity_subset.csv"
-    )
-
-    # -----------------------------------------------------------------------
-    # 🌈 2D Visualization (UMAP → t-SNE fallback)
-    # -----------------------------------------------------------------------
-    if HAS_UMAP:
-        Z = umap.UMAP(n_components=2, n_neighbors=20, min_dist=0.1, random_state=42).fit_transform(V)
-        method = "UMAP"
-    else:
-        Z = TSNE(n_components=2, init="pca", perplexity=30, random_state=42).fit_transform(V)
-        method = "t-SNE"
-
-    labels_sub = np.where(sub[col_label] == args.label1, args.label1, args.label2)
-    plt.figure(figsize=(5, 4))
-    for cls, marker in [(args.label1, "o"), (args.label2, "s")]:
-        mask = (labels_sub == cls)
-        plt.scatter(Z[mask, 0], Z[mask, 1], label=cls, marker=marker, s=18, alpha=0.75)
-    plt.legend(); plt.title(f"2D Projection of Probabilities ({method}) — n={len(sub)}")
-    plt.tight_layout(); plt.savefig(outdir / "embedding_2d.png", dpi=160); plt.close()
-
-    # -----------------------------------------------------------------------
-    # 🧾 Summary Output
-    # -----------------------------------------------------------------------
-    accuracy = float((cm[0, 0] + cm[1, 1]) / max(1, cm.sum()))
+    # Summary JSON
     summary = {
-        "csv": str(args.csv),
-        "labels": [args.label1, args.label2],
-        "counts": {
-            args.label1: int((df[col_label] == args.label1).sum()),
-            args.label2: int((df[col_label] == args.label2).sum())
-        },
-        "accuracy": accuracy,
-        "roc_auc": float(auc),
+        "rows": int(len(df)),
+        "accuracy": float(acc),
+        "auroc": float(auroc),
+        "aupr": float(aupr),
         "ece": float(ece_val),
         "artifacts": [
-            "confusion_matrix.png", "roc.png", "pr.png",
-            "calibration_bins.csv", "pairwise_cosine_similarity_subset.csv",
-            "embedding_2d.png"
-        ]
+            "confusion_matrix.png", "roc.png", "pr.png", "calibration_bins.csv"
+        ],
     }
-
-    # Write JSON summary for reproducibility
     (outdir / "summary.json").write_text(json.dumps(summary, indent=2))
     print(json.dumps(summary, indent=2))
 
