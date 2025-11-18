@@ -1,23 +1,22 @@
-# Towards Comprehensive Benchmarking of Medical Vision–Language Models (Med‑VLMs)
+# Towards Comprehensive Benchmarking of Medical Vision–Language Models (Med-VLMs)
 
 **A Unified Research Framework for Efficient, Trustworthy, and Clinically Deployable Medical Vision–Language Models**
 
-Medical imaging workflows rely on the integration of **radiology images** and **free‑text reports**. While Large Vision–Language Models (LVLMs) such as GPT‑4V and LLaVA‑Med demonstrate strong medical reasoning, they remain challenging to deploy in real clinical environments due to:
-- heavy computational requirements,
-- privacy and data‑governance barriers,
-- limited interpretability,
-- reliance on cloud‑scale infrastructure.
+Medical imaging workflows depend on the integration of **radiology images** and **clinical free-text reports**. While Large Vision–Language Models (LVLMs) such as GPT-4V and LLaVA-Med demonstrate impressive medical reasoning capabilities, they remain difficult to deploy in real clinical environments due to:
 
-This motivates a systematic study of **small and domain‑specific models (<10B parameters)**—including MedCLIP, BioMedCLIP, CheXzero, MedFILIP, MedBridge, and radiology‑specific SLMs—which offer:
-- lower latency,
-- reduced VRAM requirements,
-- improved transparency,
-- on‑premise feasibility for hospitals.
+- high computational and memory requirements,  
+- strict privacy and data-governance constraints,  
+- limited interpretability and controllability,  
+- reliance on cloud-scale, non-local infrastructure.
 
-This repository provides the **benchmarking foundation** for the manuscript:  
-📄 *"Towards Comprehensive Benchmarking of Medical Vision Language Models"* fileciteturn0file0
+These constraints motivate a systematic evaluation of **small and domain-specialized Medical Vision–Language Models (<10B parameters)**—such as **MedCLIP**, **BioMedCLIP**, **CheXzero**, **LLaVA-Med**, **XrayGPT**, **MedFILIP**, **MedBridge**, and radiology-specific SLMs—which offer:
 
-It aims to serve as a **research‑first, reproducible benchmark suite** for evaluating efficiency, accuracy, trustworthiness, and clinical readiness of Med‑VLMs.
+- substantially lower latency and memory footprint,  
+- improved transparency and reliability,  
+- feasibility for on-premise hospital deployment,  
+- stronger alignment with radiology-domain supervision.
+
+This repository serves as a **research-first, reproducible benchmark suite** designed to evaluate the **efficiency, accuracy, robustness, and clinical readiness** of small and mid-sized Med-VLMs across multiple datasets and tasks.
 
 ---
 
@@ -251,8 +250,20 @@ pip install -r requirements_kaggle.txt
 ---
 
 # 📚 References
-Formal citations and expanded methodology appear in the draft manuscript:  
-📄 *"Towards Comprehensive Benchmarking of Medical Vision Language Models"* fileciteturn0file0
+
+### Vision–Language Models
+- Wang Z. et al. **“MedCLIP: Contrastive Learning from Unpaired Medical Images and Text.”** arXiv:2301.08147 (2023).
+- Zhang Y. et al. **“BioMedCLIP: A Vision-Language Foundation Model for the Biomedical Domain.”** arXiv:2303.00915 (2023).
+- Tiu E. et al. **“Expert-level detection of pathologies from unlabelled chest X-ray images.”** Nature Biomedical Engineering (2022).
+- Li Y. et al. **“LLaVA-Med: Training a Large Language-and-Vision Assistant for Biomedicine.”** arXiv:2401.02413 (2024).
+
+### Datasets
+- Demner-Fushman D. et al. **“Preparing a collection of radiology examinations for distribution and retrieval.”** JAMIA (2012). *(Indiana University Chest X-ray Dataset)*
+- Irvin J. et al. **“CheXpert: A Large Chest Radiograph Dataset with Uncertainty Labels and Expert Comparison.”** AAAI 2019; arXiv:1901.07031.
+- Johnson A. et al. **“MIMIC-CXR: A large publicly available database of labeled chest radiographs.”** arXiv:1901.07042 (2019).
+
+### Methods
+- Radford A. et al. **“Learning Transferable Visual Models From Natural Language Supervision.”** ICML 2021; arXiv:2103.00020. *(CLIP framework)*
 
 ---
 
