@@ -21,6 +21,17 @@ It aims to serve as a **research‑first, reproducible benchmark suite** for eva
 
 ---
 
+### 🏅 Mentorship & Scientific Recognition
+This research is conducted under the mentorship of **Dr. Sanjan T. P. Gupta (AI for Healthcare)**.
+
+The work has been formally recognized through:
+- 🧾 **Poster Talk — GIW XXXIV ISCB Main Conference 2025**
+- 🎤 **Oral Presentation — ASCS 2025 Symposium on Advanced Computing & Systems**
+
+These recognitions reflect the scientific rigor, relevance, and community impact of this multi-phase Med-VLM benchmarking effort.
+
+---
+
 # 🔭 High‑Level Research Overview
 This project investigates three pillars of Med‑VLM performance:
 
