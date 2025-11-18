@@ -31,27 +31,48 @@ These recognitions reflect the scientific rigor, relevance, and community impact
 
 ---
 
-# 🔭 High‑Level Research Overview
-This project investigates three pillars of Med‑VLM performance:
+## 🔭 High-Level Research Overview
 
-### **1. Task Performance**
-- Zero‑shot classification (CheXpert labels)
-- Multimodal retrieval (image–report / report–image)
-- Report summarization and impression generation
+This benchmarking framework evaluates Medical Vision–Language Models across three foundational dimensions:
 
-### **2. Efficiency & Deployability**
-- latency and throughput
-- VRAM / CPU footprint
-- model size, FLOPs, quantization behavior
-- stability across seeds
+### 1. Core Task Performance
+Med-VLMs are assessed on radiologically meaningful downstream tasks, including:
+- **Zero-shot classification** (CheXpert-derived findings)
+- **Multimodal retrieval** (image→report and report→image search)
+- **Clinical impression summarization** using VLM decoders
+- **Representation quality** through embedding alignment and ranking metrics
 
-### **3. Trustworthiness & Reliability**
-- factual correctness
-- calibration error
-- robustness to perturbations
-- rare‑finding performance
+These tasks reflect the modalities most relevant to radiology workflows: visual interpretation, textual grounding, and summarization.
 
-This unified framework will later extend beyond chest X‑rays to CT/MRI/ophthalmology datasets.
+---
+
+### 2. Efficiency & Clinical Deployability
+To support real-world healthcare deployment, the benchmark measures:
+- **Latency and throughput** (CPU and GPU)
+- **VRAM/CPU memory footprint**
+- **Model size and FLOPs**
+- **Quantization behavior** (FP16, INT8, INT4)
+- **Stability across random seeds and patient-level splits**
+
+This enables fair comparison between models that vary widely in scale—from ~80M parameters to multi-billion-parameter VLMs.
+
+---
+
+### 3. Trustworthiness & Reliability
+Med-VLMs must not only be accurate but also *clinically reliable*.  
+We evaluate:
+- **Factual correctness** of generated summaries
+- **Calibration error** (ECE/MCE)
+- **Robustness** under perturbations and image quality degradation
+- **Rare-finding performance** in low-prevalence conditions
+- **Failure mode characterization** through error distribution analysis
+
+This reflects growing emphasis on safety-critical AI in medical imaging.
+
+---
+
+Together, these components form a unified benchmark for understanding how small and mid-sized medical VLMs perform across **accuracy, efficiency, and trustworthiness** — the three pillars required for practical clinical integration.
+
 
 ---
 
