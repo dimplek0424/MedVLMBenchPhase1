@@ -1,200 +1,250 @@
-# Towards Comprehensive Benchmarking of Medical Vision–Language Models (VLMs)  
-### MedVLM Phase 1  
+# Towards Comprehensive Benchmarking of Medical Vision–Language Models (Med‑VLMs)
+
+**A Unified Research Framework for Efficient, Trustworthy, and Clinically Deployable Medical Vision–Language Models**
+
+Medical imaging workflows rely on the integration of **radiology images** and **free‑text reports**. While Large Vision–Language Models (LVLMs) such as GPT‑4V and LLaVA‑Med demonstrate strong medical reasoning, they remain challenging to deploy in real clinical environments due to:
+- heavy computational requirements,
+- privacy and data‑governance barriers,
+- limited interpretability,
+- reliance on cloud‑scale infrastructure.
+
+This motivates a systematic study of **small and domain‑specific models (<10B parameters)**—including MedCLIP, BioMedCLIP, CheXzero, MedFILIP, MedBridge, and radiology‑specific SLMs—which offer:
+- lower latency,
+- reduced VRAM requirements,
+- improved transparency,
+- on‑premise feasibility for hospitals.
+
+This repository provides the **benchmarking foundation** for the manuscript:  
+📄 *"Towards Comprehensive Benchmarking of Medical Vision Language Models"* fileciteturn0file0
+
+It aims to serve as a **research‑first, reproducible benchmark suite** for evaluating efficiency, accuracy, trustworthiness, and clinical readiness of Med‑VLMs.
 
 ---
 
-## Overview
-This repository supports the **first phase** of an ongoing research project on **efficient Medical Vision–Language Models (VLMs)** for radiology applications.  
-The goal is to establish **reproducible baselines** for *small and efficient* models on key imaging tasks — **zero-shot classification**, **multimodal retrieval**, and **report summarization** — using publicly available datasets.
+# 🔭 High‑Level Research Overview
+This project investigates three pillars of Med‑VLM performance:
 
-This work is conducted under the **mentorship of Dr. Sanjan T. P. Gupta** (AI for Healthcare) and has been **recognized with:**
-- 🧾 **Poster Talk** — *GIW XXXIV ISCB Main Conference 2025*  
-- 🎤 **Oral Talk** — *ASCS 2025 Symposium on Advanced Computing & Systems*  
+### **1. Task Performance**
+- Zero‑shot classification (CheXpert labels)
+- Multimodal retrieval (image–report / report–image)
+- Report summarization and impression generation
 
----
+### **2. Efficiency & Deployability**
+- latency and throughput
+- VRAM / CPU footprint
+- model size, FLOPs, quantization behavior
+- stability across seeds
 
-## Research Focus
-Large-scale multimodal models (e.g., GPT-4V, CLIP, LLaVA-Med) deliver excellent results but are challenging to deploy in healthcare due to compute, interpretability, and data-governance limitations.  
-This research benchmarks **smaller, domain-specific medical VLMs (< 10 B parameters)** to understand **accuracy–efficiency trade-offs** in clinical AI.
+### **3. Trustworthiness & Reliability**
+- factual correctness
+- calibration error
+- robustness to perturbations
+- rare‑finding performance
 
-**Models currently explored**
-- [MedCLIP](https://github.com/UCSD-AI4H/MedCLIP) – Contrastive learning for image–text alignment  
-- [BioMedCLIP](https://huggingface.co/microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224) – PubMedBERT-based cross-modal encoder  
-- [CheXzero](https://github.com/rajpurkarlab/chexzero) – Zero-shot chest X-ray classification  
-- [LLaVA-Med](https://github.com/microsoft/LLaVA-Med) / [XrayGPT](https://github.com/UCSD-AI4H/XrayGPT) – Vision–language reasoning and report generation  
-
----
-
-## Dataset Usage
-
-### **Phase 1 — Local experiments**  
-For initial benchmarking and reproducibility, we use the **Indiana University Chest X-Ray dataset**:  
-🔗 [Kaggle – Chest X-rays (Indiana University)](https://www.kaggle.com/datasets/raddar/chest-xrays-indiana-university)
-
-This dataset is compact, publicly available, and manageable on local systems — ideal for CPU-based experimentation without institutional restrictions.
-
-### **Phase 2 — Clinical-scale expansion**  
-Next, the pipeline will extend to **MIMIC-CXR v2.1.0** after setting up the Kaggle GPU utilization workflow.  
-🔗 [PhysioNet – MIMIC-CXR Dataset](https://physionet.org/content/mimic-cxr/2.1.0/)
-
-> ⚠️ **No patient-identifiable information is stored or shared.**  
-> All experiments rely on public datasets and open-source models only.
+This unified framework will later extend beyond chest X‑rays to CT/MRI/ophthalmology datasets.
 
 ---
 
-## Setup Instructions
+# 🧭 Project Phases
+The repository is organized around the evolution of the research pipeline.
 
+---
+
+# ## **Phase 1 — Establishing Baseline Benchmarks (IU Chest X‑ray)**
+### **Goal:** Build a reproducible, CPU‑friendly baseline pipeline using publicly available data.
+
+Phase 1 focuses on the **Indiana University Chest X‑ray dataset**, chosen because it is:
+- fully public and de‑identified,
+- small enough for rapid iteration,
+- paired with high‑quality radiology reports,
+- ideal for early CPU‑level prototyping.
+
+### **Models evaluated in Phase 1:**
+- **MedCLIP** — contrastive image–text alignment
+- **BioMedCLIP** — vision encoder + PubMedBERT
+- **CheXzero** — zero‑shot classification
+
+### **Tasks implemented:**
+- image embedding extraction
+- text embedding extraction
+- cosine‑similarity retrieval
+- top‑K ranking
+- zero‑shot pathology classification
+
+### **Outputs from Phase 1:**
+- IU‑Xray preprocessing and splits
+- EDA notebooks + PDF reports
+- end‑to‑end Kaggle GPU workflows
+- reproducible MedCLIP/BioMedCLIP benchmarks
+- baseline metrics for all Phase‑2 comparisons
+
+This phase forms the foundation for scaling up to clinical datasets.
+
+---
+
+# ## **Phase 2 — Scaling to CheXpert and MIMIC‑CXR (Ongoing)**
+### **Goal:** Build a comprehensive, clinically meaningful benchmark that assesses accuracy, efficiency, and trust.
+
+Phase 2 expands the pipeline to:
+- **CheXpert** (label‑rich, high‑quality dataset)
+- **MIMIC‑CXR v2.1.0** (largest public CXR dataset)
+
+### **New components introduced:**
+#### **1. Advanced EDA (global)**
+- label frequency & imbalance
+- metadata and device analysis
+- density/intensity distributions
+
+#### **2. Larger model families**
+- LLaVA‑Med
+- XrayGPT
+- MedBridge
+- MedFILIP
+- SLM baselines (BioClinicalBERT, TinyBERT, DistilBERT)
+
+#### **3. Efficiency‑focused experiments**
+- 8‑bit / 4‑bit quantization
+- qLoRA fine‑tuning
+- throughput + latency benchmarking
+- VRAM footprint tracking
+
+#### **4. Trustworthiness assessment**
+- factual alignment
+- calibration metrics
+- robustness to perturbations
+- rare‑finding performance
+
+### **Expected Phase‑2 Outputs:**
+- unified metrics tables (AUC, ROUGE‑L, Recall@K)
+- cross‑dataset evaluation
+- quantization & PEFT ablation studies
+- trustworthiness report
+- comparison across model architectures
+
+Phase 2 will form the basis for the main results in the final paper.
+
+---
+
+# ## **Initial POC Experiments (Local Prototyping)
+Before formalizing Phase 1, small exploratory experiments were run locally to:
+- validate loaders,
+- test preprocessing variations (PIL vs OpenCV),
+- run mini retrieval experiments,
+- build a first prototype for the MedCLIP/BioMedCLIP pipeline,
+- verify Kaggle GPU compatibility.
+
+These experiments informed the more structured pipelines found in Phase 1.
+
+---
+
+# 📐 Model Parameter Comparison (Current Baselines)
+| Model | Architecture | Parameters | Core Capability |
+|-------|-------------|------------|-----------------|
+| **MedCLIP** | ViT-Base + BioClinicalBERT | ≈ 86M | Image–text alignment |
+| **BioMedCLIP** | ViT-Base + PubMedBERT | ≈ 120M | Cross-modal retrieval |
+| **CheXzero** | ResNet-50 + Domain LM | ≈ 90M | Zero-shot classification |
+| **LLaVA-Med / XrayGPT** | Vision encoder + LLM decoder | 7B+ | Report reasoning & summarization |
+
+This comparison highlights the accuracy–efficiency trade-offs motivating our focus on **small, deployable Med-VLMs**.
+
+---
+
+# 🧩 Modular Benchmarking Framework
+MedVLM Bench is designed as a **modular, extensible research toolkit**.
+
+Each baseline model has:
+- **Config files** in `configs/`
+- **Dedicated scripts** in `scripts/` or phase-specific `notebooks/`
+- **Metrics & outputs** tracked in `reports_phase1/`, `EDA/`, or model-specific outputs
+
+### Adding New Tasks
+New tasks (e.g., projection learning, disease-label extensions, advanced retrieval, RadGraph entity extraction) can be added as plug-in modules following the structure of existing scripts such as:
+- `medclip_demo.py`
+- `projection_medclip.py`
+
+This modular design supports Phase 2 expansion and future multi-dataset evaluation.
+
+---
+
+---
+
+# 🗂 Repository Organization
+```
+MedVLMBench/
+│
+├── data/                      # Local datasets (ignored in Git)
+│
+├── EDA/                       # Global EDA notebooks + PDF reports
+│   ├── notebooks_eda/
+│   └── eda_reports/
+│
+├── docs/                      # Workflow docs + project overview
+│
+├── phase1/                    # IU-Xray baseline pipeline
+│   ├── configs/
+│   ├── notebooks/
+│   ├── scripts/
+│   ├── reports_phase1/
+│   └── medvlm_core/
+│
+├── phase2/                    # CheXpert + MIMIC-CXR benchmark (in progress)
+│   └── ...
+│
+├── requirements.txt
+├── requirements_kaggle.txt
+└── README.md
+```
+
+---
+
+# ⚙️ Setup Instructions
 ### **1 — Clone the repository**
 ```bash
 git clone https://github.com/dimplek0424/MedVLMBenchPhase1.git
 cd MedVLMBenchPhase1
 ```
 
----
-
-### **2 — Create the Environment**
+### **2 — Create conda environment**
 ```bash
-conda create -n medvlm python=3.9 -y
+conda create -n medvlm python=3.10 -y
 conda activate medvlm
 ```
 
----
-
-### **3 — Install Dependencies**
+### **3 — Install dependencies**
 ```bash
 pip install -r requirements.txt
 ```
-
----
-
-### 🛠️ Reproducibility/Environment
-
-- **Python dependencies are versioned in both `requirements.txt` (pip) and `requirements_kaggle.txt` (Kaggle).**
-- **For poetry/conda users:** see `pyproject.toml`, `poetry.lock`, or export your own `environment.yaml`.
-- All scripts and workflows are tested end-to-end for deterministic runs (patient-level split, fixed seeds, leak-free).
-
----
-
-### **4 — Directory Structure**
-
-```
-MedVLMBenchPhase1/
-│
-├── notebooks/
-│   ├── medclip_demo.py           # MedCLIP baseline (CPU-friendly)
-│   ├── biomedclip_local.py       # BioMedCLIP evaluation script
-│   └── evaluate_vlm_models.py    # Unified benchmarking & metrics
-│
-├── data/        # Local dataset (excluded from Git)
-├── outputs/     # Metrics & logs (excluded)
-├── requirements.txt
-└── README.md
+For Kaggle:
+```bash
+pip install -r requirements_kaggle.txt
 ```
 
 ---
 
-### 🚦 Modular Benchmarking
-
-- Each baseline (MedCLIP, BioMedCLIP, CheXzero, LLaVA-Med...) has:
-    - Config file(s) in `/configs`
-    - Dedicated script(s) in `/scripts` or `/notebooks`
-    - Output and metrics tracked in `/outputs`
-- New tasks (projection, pathology/disease labels, retrieval) can be added as modules; follow the structure of `medclip_demo.py` as a template.
-
----
-
-## Evaluation Tasks
-
-| **Task** | **Description** | **Metrics** |
-|:--|:--|:--|
-| **Zero-Shot Classification** | Predict radiological findings using prompt templates without fine-tuning | Accuracy · F1 · AUC |
-| **Cross-Modal Retrieval** | Retrieve the most relevant report given an image (and vice versa) | Recall@K · Cosine Similarity |
-| **Report Summarization** | Generate concise, clinical-style summaries | BLEU · ROUGE-L · BERTScore |
-| **Efficiency Analysis** | Quantify model performance on CPU | Inference Time · Memory · FLOPs |
+# 📊 Evaluation Tasks & Metrics
+| Task | Description | Metrics |
+|------|-------------|---------|
+| Zero‑Shot Classification | Predict CheXpert labels | AUC, F1, Accuracy |
+| Cross‑Modal Retrieval | Image ↔ Report search | Recall@K, Cosine Similarity |
+| Report Summarization | Generate clinical impressions | ROUGE‑L, BLEU, BERTScore |
+| Efficiency Analysis | Measure deployability | VRAM, latency, FLOPs |
 
 ---
 
-## Model Parameter Overview
-
-| **Model** | **Architecture** | **Parameters** | **Core Capability** |
-|:--|:--|:--|:--|
-| **MedCLIP** | ViT-Base + BioClinicalBERT | ≈ 86 M | Image–text alignment |
-| **BioMedCLIP** | ViT-Base + PubMedBERT | ≈ 120 M | Cross-modal retrieval |
-| **CheXzero** | ResNet-50 + Domain LM | ≈ 90 M | Zero-shot classification |
-| **LLaVA-Med / XrayGPT** | Vision encoder + LLM decoder | 7 B + | Report reasoning / summarization |
+# 🛡 Ethics & Compliance
+- Only uses public, de‑identified datasets
+- Complies with PhysioNet DUA
+- No PHI or sensitive information stored
+- All models follow their original licenses
 
 ---
 
-## Evaluation Pipeline
-
-- 1️⃣  Preprocessing — Resize & normalize images (224 × 224 px)
-- 2️⃣  Feature Extraction — Generate embeddings via MedCLIP / BioMedCLIP
-- 3️⃣  Zero-Shot or Retrieval Evaluation — Compute similarity or class predictions
-- 4️⃣  Summarization Phase — Use LLaVA-Med / XrayGPT for report generation
-- 5️⃣  Efficiency Metrics — Record latency, memory usage & throughput
+# 📚 References
+Formal citations and expanded methodology appear in the draft manuscript:  
+📄 *"Towards Comprehensive Benchmarking of Medical Vision Language Models"* fileciteturn0file0
 
 ---
 
-## Next Steps
-
-- **Extend benchmarking** to MIMIC-CXR Phase 2 (post-access approval)  
-- **Apply quantization** and **LoRA fine-tuning** for efficient inference  
-
----
-
-## Ethics & Compliance
-
-This repository adheres to ethical AI research and data-governance standards:
-
-- Uses only **public, de-identified datasets** (Indiana University Chest X-rays)  
-- Complies with **PhysioNet Data Use Agreement (DUA)** for MIMIC-CXR access  
-- Employs only **open-source pretrained models** under their respective licenses  
-- No patient or personally identifiable information (PII) is stored or shared  
-
----
-
-## References
-
-1. **Wang Z. et al.** *MedCLIP: Contrastive Learning for Medical Vision–Language Understanding.*  
-   arXiv preprint, 2023. [🔗 arXiv:2303.XXXX](https://arxiv.org/abs/2303.XXXX)
-
-2. **Microsoft Research.** *BioMedCLIP: Cross-Modal Pretraining for Biomedical Understanding.*  
-   arXiv preprint, 2023. [🔗 arXiv:2301.XXXX](https://arxiv.org/abs/2301.XXXX)
-
-3. **Tiu E. et al.** *CheXzero: Training Medical AI Models Without Labels.*  
-   *Nature Medicine*, 2022. [🔗 DOI:10.1038/s41591-022-02157-4](https://doi.org/10.1038/s41591-022-02157-4)
-
-4. **Li Y. et al.** *LLaVA-Med: Large Language-and-Vision Assistant for Biomedicine.*  
-   arXiv preprint, 2024. [🔗 arXiv:2401.XXXX](https://arxiv.org/abs/2401.XXXX)
-
----
-
-## License
-
-This project is released under the **MIT License** for research and educational purposes.  
-If you build upon or reproduce this work, please provide proper attribution.
-
-📄 *License text available in* [`LICENSE`](LICENSE)
-
----
-
-## 📖 Documentation & Workflows
-
-- **Kaggle GPU Workflow:**  
-  Detailed steps to set up and reproduce experiments on Kaggle notebooks and environments.  
-  📄 [KAGGLE_WORKFLOW.md](KAGGLE_WORKFLOW.md)
-
-- **MedCLIP Benchmarking Workflow:**  
-  CLIP-faithful preprocessing, image handling, evaluation methodology, and experimental caveats.  
-  📄 [MedCLIP_WORKFLOW.md](MedCLIP_WORKFLOW.md) <!-- Add/rename if you use a different filename -->
-
-- **Project Overview:**  
-  Extended rationale, benchmarking registry, and vision for future work.  
-  📄 [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md)
-
-- **Exploratory Data Analysis Report:**  
-  Visual and statistical EDA on Indiana CXR data and splits.  
-  📄 [eda_indiana_chestxray.pdf](eda_indiana_chestxray.pdf)
-
-
-> Includes dataset registry, preprocessing flow, model configuration, and evaluation metrics.
+# 👩‍💻 Maintainer
+**Dimple Khatri** — AI for Healthcare Researcher  
+Contact: dimplek0424@gmail.com
