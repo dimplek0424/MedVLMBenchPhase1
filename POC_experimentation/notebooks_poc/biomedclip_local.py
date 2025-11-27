@@ -18,7 +18,7 @@ import torch.nn.functional as F
 import open_clip
 
 # -------------------- config --------------------
-IMG_ROOT = r"D:\MedVLMPhase1\data\chestxray_iu\images\images_normalized"
+IMG_ROOT = r"D:\MedVLMBench\phase1\data\chestxray_iu\images\images_normalized"
 IMG_PATTERNS = [IMG_ROOT + r"\**\*.jpg",
                 IMG_ROOT + r"\**\*.jpeg",
                 IMG_ROOT + r"\**\*.png"]
@@ -26,7 +26,7 @@ LABELS = ["no finding","cardiomegaly","pulmonary edema","pneumonia",
           "atelectasis","pleural effusion","consolidation","pneumothorax"]
 TEMPLATE = "a chest x-ray showing {}"
 N_IMAGES = 5
-OUT_JSON = r"D:\MedVLMPhase1\outputs\biomedclip_zero_shot.json"
+OUT_JSON = r"D:\MedVLMBench\POC_experimentation\outputs"
 MODEL_ID = "microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224"
 # ------------------------------------------------
 

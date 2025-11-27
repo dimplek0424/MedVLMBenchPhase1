@@ -7,7 +7,7 @@ Fixes in this version:
 - Set explicit max_length to silence truncation warnings
 
 Paths assumed:
-  D:\MedVLMPhase1\data\chestxray_iu\images\images_normalized\**\*.jpg|jpeg|png
+  D:\MedVLMBench\phase1\data\chestxray_iu\images\images_normalized\**\*.jpg|jpeg|png
 """
 
 import os
@@ -30,7 +30,7 @@ from torchvision import transforms
 # ----------------------------
 # 0) Configuration
 # ----------------------------
-IMG_ROOT = r"D:\MedVLMPhase1\data\chestxray_iu\images\images_normalized"
+IMG_ROOT = r"D:\MedVLMBench\phase1\data\chestxray_iu\images\images_normalized"
 IMG_PATTERNS: List[str] = [
     IMG_ROOT + r"\**\*.jpg",
     IMG_ROOT + r"\**\*.jpeg",
@@ -49,7 +49,7 @@ LABELS = [
 TEMPLATE = "a chest x-ray showing {}"
 N_IMAGES = 5
 SAVE_JSON = True
-OUT_JSON = r"D:\MedVLMPhase1\outputs\medclip_zero_shot.json"
+OUT_JSON = r"D:\MedVLMBench\POC_experimentation\outputs\medclip_zero_shot.json"
 
 # ----------------------------
 # 1) Device

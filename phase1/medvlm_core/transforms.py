@@ -104,7 +104,7 @@ if __name__ == "__main__":
     from medvlm_core.io import imread, to_float01
 
     # Example: load a single CXR and visualize the effect of CLAHE
-    path = "D:/MedVLMPhase1/data/chestxray_iu/images/images_normalized/00012345_000.png"
+    path = "D:\MedVLMBench\phase1\data\chestxray_iu\images\images_normalized/00012345_000.png"
 
     img = imread(path, mode="gray")       # Load grayscale
     img = to_float01(img)                 # Normalize to [0,1]

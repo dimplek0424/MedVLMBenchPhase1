@@ -1,6 +1,6 @@
 dataset:
   name: iu_chestxray
-  base_dir: "D:/MedVLMPhase1/data/chestxray_iu"
+  base_dir: "D:\MedVLMBench\phase1\data\chestxray_iu"
   images_subdir: "images/images_normalized"
   reports_csv: "indiana_reports.csv"
   projections_csv: "indiana_projections.csv"  # has image filename + view label
@@ -20,7 +20,7 @@ loader:
   img_size: 224            # documented only; ignored when clip_preprocess=true
 
 output:
-  dir: "D:/MedVLMPhase1/outputs"
+  dir: "D:\MedVLMBench\phase1\results_phase1"
 
 logging:
   level: INFO

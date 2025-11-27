@@ -1,20 +1,16 @@
 """
 Evaluate & compare MedCLIP vs BiomedCLIP (CPU-friendly)
 
-Inputs (already produced by your scripts):
-  D:\MedVLMPhase1\outputs\medclip_zero_shot.json
-  D:\MedVLMPhase1\outputs\biomedclip_zero_shot.json
-
 Optional ground truth (create if you want label metrics):
-  D:\MedVLMPhase1\outputs\ground_truth.csv
+  D:\MedVLMBench\POC_experimentation\outputs\ground_truth.csv
   Format:
     image_path,labels
     D:\...\img1.png,atelectasis
     D:\...\img2.png,pleural effusion;pneumonia
 
 Outputs:
-  D:\MedVLMPhase1\outputs\eval_compare_per_image.csv   (per-image table)
-  D:\MedVLMPhase1\outputs\eval_summary.txt             (short summary report)
+  D:\MedVLMBench\POC_experimentation\outputs\eval_compare_per_image.csv   (per-image table)
+  D:\MedVLMBench\POC_experimentation\outputs\eval_summary.txt             (short summary report)
 """
 
 import os, json, math, csv
@@ -23,7 +19,7 @@ import numpy as np
 import pandas as pd
 
 # ---------- paths ----------
-ROOT = Path(r"D:\MedVLMPhase1")
+ROOT = Path(r"D:\MedVLMBench")
 OUT_DIR = ROOT / "outputs"
 MED_JSON = OUT_DIR / "medclip_zero_shot.json"
 BIO_JSON = OUT_DIR / "biomedclip_zero_shot.json"

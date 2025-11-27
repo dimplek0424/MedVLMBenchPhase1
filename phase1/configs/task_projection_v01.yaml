@@ -4,4 +4,4 @@ task:
     - "frontal chest x-ray"
     - "lateral chest x-ray"
   # Optional weak labels if you have them; omit if not available.
-  weak_labels_csv: "D:/MedVLMPhase1/data/projection_labels.csv"
+  weak_labels_csv: "D:\MedVLMBench\phase1\data/projection_labels.csv"
