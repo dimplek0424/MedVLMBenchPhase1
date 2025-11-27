@@ -20,7 +20,7 @@ import pandas as pd
 
 # ---------- paths ----------
 ROOT = Path(r"D:\MedVLMBench")
-OUT_DIR = ROOT / "outputs"
+OUT_DIR = ROOT / "POC_experimentation" / "outputs"
 MED_JSON = OUT_DIR / "medclip_zero_shot.json"
 BIO_JSON = OUT_DIR / "biomedclip_zero_shot.json"
 GT_CSV  = OUT_DIR / "ground_truth.csv"   # optional
