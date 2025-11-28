@@ -1,434 +1,448 @@
 """
-Select a diverse 20–40 image sanity subset from IU-CXR.
+IU-CXR sanity subset + integrity check (IU-aware, no normals, tech-unsat split)
+-------------------------------------------------------------------------------
 
-Usage (from repo root):
+This script:
+
+1. Loads IU-CXR reports + projections
+2. Builds `caption` = indication + findings + impression
+3. Separates and saves exams with:
+     - "Technical Quality of Image Unsatisfactory" (MeSH or Problems)
+4. Removes from sanity subset ANY row where:
+     - MeSH or Problems contains "normal" (case-insensitive), OR
+     - MeSH or Problems contains "Technical Quality of Image Unsatisfactory"
+5. Checks image integrity:
+     - missing files
+     - orphan files
+6. Builds 14 CheXpert-like pathology labels using:
+     - MeSH + Problems + caption
+7. Samples UIDs (study-level), includes ALL images/views for each UID
+8. Produces a subset CSV with full report fields + labels.
+
+Run from repo root:
     python -m phase1.scripts.select_iucxr_subset
-
-Assumptions:
-- Kaggle IU-CXR CSVs live under: phase1/data/chestxray_iu/
-    - indiana_reports.csv
-    - indiana_projections.csv
-- Images live under: phase1/data/chestxray_iu/images/  (or images-small/)
-  and filenames in the CSV can be joined with that folder.
-
-Edit IMAGE_ROOT / CSV paths below if your layout is different.
 """
 
 import os
-import re
-import random
-from typing import List, Dict
-
-import numpy as np
+from typing import Set
 import pandas as pd
-from PIL import Image
+import numpy as np
 
-# --------- CONFIG: EDIT IF NEEDED -----------------------------------------
 
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-DATA_ROOT = os.path.join(REPO_ROOT, "phase1", "data", "chestxray_iu")
+# ================================
+# CONFIG
+# ================================
+REPO = r"D:\MedVLMBench"
+DATA_DIR = os.path.join(REPO, "phase1", "data", "chestxray_iu")
+REPORTS_CSV = os.path.join(DATA_DIR, "indiana_reports.csv")
+PROJ_CSV = os.path.join(DATA_DIR, "indiana_projections.csv")
 
-REPORTS_CSV = os.path.join(DATA_ROOT, "indiana_reports.csv")
-PROJ_CSV = os.path.join(DATA_ROOT, "indiana_projections.csv")
+IMAGE_DIR = os.path.join(DATA_DIR, "images", "images_normalized")
 
-# set this to "images-small" or whatever your folder is actually called
-IMAGE_ROOT = os.path.join(DATA_ROOT, "images")
+OUT_DIR = os.path.join(REPO, "EDA", "eda_reports")
+os.makedirs(OUT_DIR, exist_ok=True)
 
-OUTPUT_CSV = os.path.join(
-    REPO_ROOT, "EDA", "eda_reports", "sanity_subset_iucxr_v01.csv"
-)
+OUT_SUBSET = os.path.join(OUT_DIR, "sanity_subset_iucxr_v02.csv")
+OUT_MISSING = os.path.join(OUT_DIR, "iu_cxr_missing_files.csv")
+OUT_ORPHAN = os.path.join(OUT_DIR, "iu_cxr_orphan_files.csv")
+OUT_UNMATCHED = os.path.join(OUT_DIR, "iu_cxr_unmatched_csv_rows.csv")
+OUT_TQ_UNSAT = os.path.join(OUT_DIR, "iu_cxr_technical_unsatisfactory.csv")
 
-RANDOM_SEED = 42
-random.seed(RANDOM_SEED)
-np.random.seed(RANDOM_SEED)
+np.random.seed(42)
 
-# Pathology categories we care about for the subset
-PATHOLOGY_CATEGORIES = [
+CHEXPERT_LABELS = [
     "no_finding",
+    "enlarged_cardiomediastinum",
     "cardiomegaly",
-    "effusion",
-    "consolidation_pneumonia",
+    "lung_opacity",
+    "lung_lesion",
+    "edema",
+    "consolidation",
+    "pneumonia",
     "atelectasis",
-    "infiltration_opacity",
-    "multi_label",
+    "pneumothorax",
+    "pleural_effusion",
+    "pleural_other",
+    "fracture",
+    "support_devices",
 ]
 
-# --------- 1. LOAD & MERGE METADATA ----------------------------------------
 
-
-def load_and_merge_metadata() -> pd.DataFrame:
-    """Load IU-CXR CSVs, merge them on 'uid', and create a 'caption' column."""
-    if not os.path.exists(REPORTS_CSV):
-        raise FileNotFoundError(f"Reports CSV not found: {REPORTS_CSV}")
-    if not os.path.exists(PROJ_CSV):
-        raise FileNotFoundError(f"Projections CSV not found: {PROJ_CSV}")
-
-    reports = pd.read_csv(REPORTS_CSV)
+# ================================
+# STEP 1 — LOAD & MERGE CSVs
+# ================================
+def load_iu_cxr() -> pd.DataFrame:
+    rep = pd.read_csv(REPORTS_CSV)
     proj = pd.read_csv(PROJ_CSV)
 
-    # Expect a common 'uid' column
-    if "uid" not in reports.columns or "uid" not in proj.columns:
-        raise KeyError("Expected 'uid' column in both CSVs")
+    if "uid" not in rep.columns or "uid" not in proj.columns:
+        raise KeyError("Both CSVs must contain 'uid' column")
 
-    df = reports.merge(proj, on="uid", how="left", suffixes=("_rep", "_proj"))
+    df = rep.merge(proj, on="uid", how="inner")
 
-    # Standardize some expected column names (adjust if your CSV differs)
-    col_map = {}
-    if "filename" in df.columns:
-        col_map["filename"] = "image_id"
-    if "projection" in df.columns:
-        col_map["projection"] = "view"
-    if "sex" in df.columns:
-        col_map["sex"] = "gender"
-
-    if col_map:
-        df = df.rename(columns=col_map)
-
-    # Combine findings + impression into caption
-    for c in ["findings", "impression"]:
-        if c not in df.columns:
-            df[c] = ""
-
+    # Build caption = indication + findings + impression
+    df["indication"] = df["indication"].fillna("")
     df["findings"] = df["findings"].fillna("")
     df["impression"] = df["impression"].fillna("")
 
-    df["caption_raw"] = (
-        df["findings"].astype(str).str.strip()
+    df["caption"] = (
+        df["indication"].astype(str).str.strip()
+        + ". "
+        + df["findings"].astype(str).str.strip()
         + ". "
         + df["impression"].astype(str).str.strip()
     )
 
-    # Clean caption: remove 'nan', multiple spaces, etc.
+    # Clean up "nan" and extra whitespace / dots
     df["caption"] = (
-        df["caption_raw"]
+        df["caption"]
         .str.replace(r"\bnan\b", "", regex=True)
+        .str.replace(r"\s+\.", ".", regex=True)
+        .str.replace(r"\.\s*\.", ".", regex=True)
         .str.replace(r"\s+", " ", regex=True)
-        .str.strip()
+        .str.strip(". ")
     )
 
-    # drop rows with completely empty captions
+    # Drop rows with empty captions
     df = df[df["caption"].str.len() > 0].copy()
 
-    # Short helpers
+    # Basic text stats
     df["report_word_count"] = df["caption"].str.split().apply(len)
-    df["report_sentences"] = df["caption"].str.count(r"\.") + 1
+    df["report_sentence_count"] = df["caption"].str.count(r"\.") + 1
+
+    # Lowercase MeSH / Problems for filtering
+    mesh_lower = df["MeSH"].fillna("").str.lower()
+    prob_lower = df["Problems"].fillna("").str.lower()
+
+    # Rows with Technical Quality of Image Unsatisfactory
+    is_tq_unsat = (
+        mesh_lower.str.contains("technical quality of image unsatisfactory")
+        | prob_lower.str.contains("technical quality of image unsatisfactory")
+    )
+
+    # Rows with MeSH or Problems marked as "normal"
+    is_normal_meta = mesh_lower.str.contains("normal") | prob_lower.str.contains("normal")
+
+    # Save all technical-unsatisfactory rows to a separate CSV
+    df[is_tq_unsat].to_csv(OUT_TQ_UNSAT, index=False)
+
+    # Remove BOTH:
+    #  - MeSH/Problems "normal"
+    #  - Technical Quality Unsatisfactory
+    to_exclude = is_tq_unsat | is_normal_meta
+    df = df[~to_exclude].copy()
 
     return df
 
 
-# --------- 2. SIMPLE PATHOLOGY TAGGING FROM TEXT --------------------------
+# ================================
+# STEP 2 — PATH CHECKING
+# ================================
+def resolve_image_path(filename: str) -> str:
+    return os.path.join(IMAGE_DIR, filename)
 
 
-def add_pathology_labels(df: pd.DataFrame) -> pd.DataFrame:
+def check_image_integrity(df: pd.DataFrame):
+    csv_files = set(df["filename"].astype(str))
+    folder_files = set(os.listdir(IMAGE_DIR))
+
+    missing = sorted(list(csv_files - folder_files))
+    orphan = sorted(list(folder_files - csv_files))
+
+    unmatched_rows = df[df["filename"].isin(missing)].copy()
+
+    pd.DataFrame({"missing_filename": missing}).to_csv(OUT_MISSING, index=False)
+    pd.DataFrame({"orphan_file": orphan}).to_csv(OUT_ORPHAN, index=False)
+    unmatched_rows.to_csv(OUT_UNMATCHED, index=False)
+
+    print(f"[Integrity] Missing files: {len(missing)}")
+    print(f"[Integrity] Orphan files: {len(orphan)}")
+    print(f"[Integrity] CSV rows with missing images: {len(unmatched_rows)}")
+
+    return missing
+
+
+# ================================
+# STEP 3 — IU-AWARE PATHOLOGY LABELS
+# ================================
+def add_iu_pathology_labels(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Add simple rule-based pathology flags from caption text.
+    Pathology labels tuned for IU-CXR.
 
-    NOTE: This is intentionally simple + noisy.
-    It is meant to help pick diverse examples, not serve as gold labels.
+    Uses:
+      - caption (indication + findings + impression)  -> free text
+      - MeSH + Problems                               -> semi-structured codes
     """
-    text = df["caption"].str.lower().fillna("")
+    caption = df["caption"].fillna("").str.lower()
+    mp = (df["MeSH"].fillna("") + ";" + df["Problems"].fillna("")).str.lower()
 
-    def contains_any(patterns: List[str]) -> pd.Series:
-        regex = "|".join(patterns)
-        return text.str.contains(regex, regex=True)
+    def has_caption(pos_patterns, neg_patterns=None):
+        pos_pat = "|".join(pos_patterns)
+        pos_m = caption.str.contains(pos_pat, regex=True)
+        if neg_patterns:
+            neg_pat = "|".join(neg_patterns)
+            neg_m = caption.str.contains(neg_pat, regex=True)
+            return pos_m & ~neg_m
+        return pos_m
 
-    df["no_finding"] = contains_any(
-        [
-            r"\bno acute cardiopulmonary disease\b",
-            r"\bno acute disease\b",
-            r"\bno active disease\b",
-            r"\bno significant abnormalit(y|ies)\b",
-            r"\bnormal chest\b",
-            r"\bnormal study\b",
-        ]
+    def has_mp(patterns):
+        pat = "|".join(patterns)
+        return mp.str.contains(pat, regex=True)
+
+    # 1. Enlarged cardiomediastinum / mediastinum widening
+    df["enlarged_cardiomediastinum"] = has_mp(["mediastinum", "mediastinal widening"])
+
+    # 2. Cardiomegaly / enlarged heart
+    cardiop = has_mp(["cardiomegaly", "cardiac shadow/enlarged", "cardiac enlargement"])
+    cardiop |= has_caption(
+        ["cardiomegaly", "enlarged cardiac silhouette", "heart size is enlarged", "mildly enlarged heart"],
+        ["no cardiomegaly", "heart size within normal limits", "cardiac silhouette is normal"],
     )
+    df["cardiomegaly"] = cardiop
 
-    df["cardiomegaly"] = contains_any(
-        [
-            r"\bcardiomegaly\b",
-            r"\benlarged cardiac silhouette\b",
-            r"\bcardiac enlargement\b",
-        ]
+    # 3. Lung opacity / infiltrate / airspace disease
+    opac = has_mp(["opacity", "airspace disease", "air space disease", "infiltrate"])
+    opac |= has_caption(
+        ["airspace disease", "parenchymal opacity", "infiltrate", "infiltrates", "focal opacity"],
+        ["no focal opacity", "no focal infiltrate"],
     )
+    df["lung_opacity"] = opac
 
-    df["effusion"] = contains_any(
-        [
-            r"\bpleural effusion(s)?\b",
-            r"\beffusion\b",
-        ]
+    # 4. Lung lesion (nodule / mass)
+    lesion = has_mp(["nodule", "mass", "lesion"])
+    lesion |= has_caption(["pulmonary nodule", "lung nodule", "lung mass", "pulmonary mass"])
+    df["lung_lesion"] = lesion
+
+    # 5. Edema / congestion
+    edema = has_mp(["pulmonary congestion"])
+    edema |= has_caption(["pulmonary edema", "interstitial edema", "vascular congestion"])
+    df["edema"] = edema
+
+    # 6. Consolidation
+    cons = has_mp(["airspace disease", "airspace opacity"])
+    cons |= has_caption(
+        ["consolidation", "airspace consolidation"],
+        ["no consolidation", "no focal consolidation"],
     )
+    df["consolidation"] = cons
 
-    df["consolidation_pneumonia"] = contains_any(
-        [
-            r"\bconsolidation\b",
-            r"\bpneumonia\b",
-            r"\binfiltrate\b",
-        ]
+    # 7. Pneumonia
+    pneu = has_mp(["pneumonia"])
+    pneu |= has_caption(
+        ["pneumonia", "pneumonic process"],
+        ["no evidence of pneumonia"],
     )
+    df["pneumonia"] = pneu
 
-    df["atelectasis"] = contains_any(
-        [
-            r"\batelectasis\b",
-        ]
+    # 8. Atelectasis
+    ate = has_mp(["atelectasis"])
+    ate |= has_caption(
+        ["atelectasis", "volume loss", "bibasilar atelectasis"],
+        ["no atelectasis"],
     )
+    df["atelectasis"] = ate
 
-    df["infiltration_opacity"] = contains_any(
-        [
-            r"\binfiltration\b",
-            r"\bopacity\b",
-            r"\bopacities\b",
-        ]
+    # 9. Pneumothorax
+    ptx = has_mp(["pneumothorax"])
+    ptx |= has_caption(
+        ["pneumothorax", "pleural air"],
+        ["no pneumothorax"],
     )
+    df["pneumothorax"] = ptx
 
-    # count how many of the above are true
-    label_cols = [
+    # 10. Pleural effusion
+    plef = has_mp(["pleural effusion"])
+    plef |= has_caption(
+        ["pleural effusion", "effusion", "blunting of the costophrenic angle"],
+        ["no pleural effusion", "no effusion", "no definite effusion"],
+    )
+    df["pleural_effusion"] = plef
+
+    # 11. Other pleural disease
+    pleo = has_mp(["pleural thickening", "pleural plaque", "pleural calcification"])
+    pleo |= has_caption(
+        ["pleural thickening", "pleural disease"],
+        ["no pleural thickening"],
+    )
+    df["pleural_other"] = pleo
+
+    # 12. Fracture
+    frac = has_mp(["fracture"])
+    frac |= has_caption(
+        ["fracture"],
+        ["no acute fracture", "no fracture"],
+    )
+    df["fracture"] = frac
+
+    # 13. Support devices (tubes, lines, pacemaker, etc.)
+    supp = has_mp(["tube, inserted", "medical device", "pacemaker"])
+    supp |= has_caption(
+        [
+            "endotracheal tube",
+            "tracheostomy tube",
+            "central venous catheter",
+            "central line",
+            "picc line",
+            "pacemaker",
+            "icd device",
+            "defibrillator",
+            "chest tube",
+            "sternal wires",
+        ],
+        ["no tubes or lines"],
+    )
+    df["support_devices"] = supp
+
+    # 14. No finding: only if nothing else on AND clearly normal in text
+    pathology_cols = [
+        "enlarged_cardiomediastinum",
         "cardiomegaly",
-        "effusion",
-        "consolidation_pneumonia",
+        "lung_opacity",
+        "lung_lesion",
+        "edema",
+        "consolidation",
+        "pneumonia",
         "atelectasis",
-        "infiltration_opacity",
+        "pneumothorax",
+        "pleural_effusion",
+        "pleural_other",
+        "fracture",
+        "support_devices",
     ]
+    any_path = df[pathology_cols].any(axis=1)
 
-    df["num_positive_labels"] = df[label_cols].sum(axis=1)
-    df["multi_label"] = df["num_positive_labels"] >= 2
+    normal_flag = caption.str.contains(
+        "lungs are clear|no acute cardiopulmonary|no active cardiopulmonary|normal chest|normal study",
+        regex=True,
+    )
+
+    df["no_finding"] = (~any_path) & normal_flag
 
     return df
 
 
-# --------- 3. IMAGE QUALITY METRICS ---------------------------------------
-
-
-def image_path_from_row(row: pd.Series) -> str:
+# ================================
+# STEP 4 — SAMPLE UIDs (no normals by metadata)
+# ================================
+def sample_uids(df: pd.DataFrame, max_uids: int = 24) -> Set[str]:
     """
-    Construct image path from row.
+    Sample UIDs to get a pathology-diverse sanity subset.
 
-    Adjust this if your filename column is named differently or has extension.
+    All rows with MeSH/Problems 'normal' or technical-unsat
+    have ALREADY been removed in load_iu_cxr().
     """
-    if "image_id" in row:
-        fname = row["image_id"]
-    elif "filename" in row:
-        fname = row["filename"]
-    else:
-        raise KeyError("Need 'image_id' or 'filename' column to locate images")
 
-    # Some CSVs contain just the base name; append extension if needed.
-    # Try as-is; if not found, try adding '.png' and '.jpg'.
-    candidate_paths = [
-        os.path.join(IMAGE_ROOT, str(fname)),
-        os.path.join(IMAGE_ROOT, str(fname) + ".png"),
-        os.path.join(IMAGE_ROOT, str(fname) + ".jpg"),
-        os.path.join(IMAGE_ROOT, str(fname) + ".jpeg"),
-    ]
-    for p in candidate_paths:
-        if os.path.exists(p):
-            return p
-    return candidate_paths[0]  # fall back; may be missing on disk
+    selected: Set[str] = set()
 
+    rules = {
+        "cardiomegaly": 3,
+        "pneumonia": 3,
+        "pleural_effusion": 3,
+        "atelectasis": 3,
+        "consolidation": 2,
+        "pneumothorax": 2,
+        "edema": 2,
+        "lung_opacity": 3,
+        "lung_lesion": 2,
+        "fracture": 2,
+        "support_devices": 2,
+    }
 
-def compute_image_stats(df: pd.DataFrame, max_images: int = 2000) -> pd.DataFrame:
-    """
-    Compute mean and std intensity for (up to) max_images rows.
-    For speed, we only compute for a subset then use them when sampling.
-    """
-    df = df.copy()
-    df["image_path"] = df.apply(image_path_from_row, axis=1)
-
-    # Only sample up to 'max_images' rows for stats to keep it light
-    if len(df) > max_images:
-        df_sample = df.sample(n=max_images, random_state=RANDOM_SEED)
-    else:
-        df_sample = df
-
-    mean_map: Dict[str, float] = {}
-    std_map: Dict[str, float] = {}
-
-    for idx, row in df_sample.iterrows():
-        path = row["image_path"]
-        if not os.path.exists(path):
+    for label, n in rules.items():
+        if label not in df.columns:
             continue
-        try:
-            img = Image.open(path).convert("L")  # grayscale
-            arr = np.array(img, dtype=np.float32) / 255.0
-            mean_map[idx] = float(arr.mean())
-            std_map[idx] = float(arr.std())
-        except Exception:
+        uids = df[df[label] == True]["uid"].unique()
+        if len(uids) == 0:
             continue
 
-    df["mean_intensity"] = df.index.map(mean_map)
-    df["std_intensity"] = df.index.map(std_map)
+        take = min(len(uids), n)
+        chosen = np.random.choice(uids, size=take, replace=False)
+        selected.update(chosen)
 
-    return df
+    # If we still have room, fill with any remaining UIDs
+    all_uids = df["uid"].unique()
+    remaining_slots = max_uids - len(selected)
+    if remaining_slots > 0:
+        remaining = [u for u in all_uids if u not in selected]
+        if len(remaining) > 0:
+            take = min(len(remaining), remaining_slots)
+            extra = np.random.choice(remaining, size=take, replace=False)
+            selected.update(extra)
 
-
-# --------- 4. SAMPLING LOGIC ----------------------------------------------
-
-
-def sample_by_label(df: pd.DataFrame, label: str, n: int) -> pd.DataFrame:
-    """Sample up to n rows where df[label] is True."""
-    if label not in df.columns:
-        return df.iloc[0:0].copy()
-
-    candidates = df[df[label]]
-
-    # Prefer PA/AP views if 'view' column exists
-    if "view" in candidates.columns:
-        candidates = candidates[candidates["view"].isin(["PA", "AP", "Frontal"])]
-
-    if len(candidates) == 0:
-        return candidates
-
-    if len(candidates) <= n:
-        return candidates
-
-    return candidates.sample(n=n, random_state=RANDOM_SEED)
+    return selected
 
 
-def sample_technical_cases(df: pd.DataFrame, n_each: int = 2) -> pd.DataFrame:
-    """
-    Pick under-exposed, over-exposed, and low-contrast examples
-    using mean/std intensity.
-    """
-    df_valid = df.dropna(subset=["mean_intensity", "std_intensity"])
+# ================================
+# STEP 5 — BUILD FINAL SUBSET
+# ================================
+def build_subset(df: pd.DataFrame, selected_uids: Set[str]) -> pd.DataFrame:
+    sub = df[df["uid"].isin(selected_uids)].copy()
 
-    # Quantile thresholds
-    low_brightness_thr = df_valid["mean_intensity"].quantile(0.1)
-    high_brightness_thr = df_valid["mean_intensity"].quantile(0.9)
-    low_contrast_thr = df_valid["std_intensity"].quantile(0.1)
+    def collect_labels(row):
+        labs = []
+        for L in CHEXPERT_LABELS:
+            if L in row and bool(row[L]):
+                labs.append(L)
+        return ",".join(labs)
 
-    under = df_valid[df_valid["mean_intensity"] <= low_brightness_thr]
-    over = df_valid[df_valid["mean_intensity"] >= high_brightness_thr]
-    lowc = df_valid[df_valid["std_intensity"] <= low_contrast_thr]
+    sub["Pathology_Labels_14"] = sub.apply(collect_labels, axis=1)
 
-    def pick(df_group: pd.DataFrame, n: int) -> pd.DataFrame:
-        if len(df_group) <= n:
-            return df_group
-        return df_group.sample(n=n, random_state=RANDOM_SEED)
-
-    dfs = [
-        pick(under, n_each).assign(
-            tech_reason="under_exposed"
-        ),
-        pick(over, n_each).assign(
-            tech_reason="over_exposed"
-        ),
-        pick(lowc, n_each).assign(
-            tech_reason="low_contrast"
-        ),
+    keep = [
+        "uid",
+        "filename",
+        "projection",
+        "MeSH",
+        "Problems",
+        "image",
+        "indication",
+        "comparison",
+        "findings",
+        "impression",
+        "caption",
+        "Pathology_Labels_14",
+        "report_word_count",
+        "report_sentence_count",
     ]
-    out = pd.concat(dfs, axis=0).drop_duplicates()
+
+    keep = [c for c in keep if c in sub.columns]
+    out = sub[keep].reset_index(drop=True)
+
+    # Rename for convenience in notebooks
+    out = out.rename(
+        columns={
+            "uid": "UID",
+            "filename": "Image_ID",
+            "projection": "View",
+        }
+    )
+
     return out
 
 
-def build_sanity_subset(df: pd.DataFrame) -> pd.DataFrame:
-    """Combine pathology-based and technical sampling to get ~30 examples."""
-    pieces = []
-
-    # Pathology-based sampling: aim for 2–3 per category
-    label_to_n = {
-        "no_finding": 4,
-        "cardiomegaly": 3,
-        "effusion": 3,
-        "consolidation_pneumonia": 3,
-        "atelectasis": 3,
-        "infiltration_opacity": 3,
-        "multi_label": 4,
-    }
-
-    for label, n in label_to_n.items():
-        sub = sample_by_label(df, label, n)
-        if len(sub) > 0:
-            sub = sub.copy()
-            sub["selection_reason"] = f"pathology:{label}"
-            pieces.append(sub)
-
-    # Technical variation
-    tech = sample_technical_cases(df, n_each=2)
-    if len(tech) > 0:
-        tech = tech.copy()
-        tech["selection_reason"] = tech.get("selection_reason", "") + ";technical"
-
-        pieces.append(tech)
-
-    subset = pd.concat(pieces, axis=0).drop_duplicates()
-
-    # If we ended up with > 40, subsample; if < 20, we just keep what we have
-    if len(subset) > 40:
-        subset = subset.sample(n=40, random_state=RANDOM_SEED)
-
-    # Create clean columns for output table
-    subset = subset.copy()
-
-    # Basic demographics
-    age_col = "age" if "age" in subset.columns else None
-    gender_col = "gender" if "gender" in subset.columns else None
-
-    out = pd.DataFrame()
-    out["Image_ID"] = subset.get("image_id", subset.get("filename"))
-    if "view" in subset.columns:
-        out["View"] = subset["view"]
-    else:
-        out["View"] = ""
-
-    if age_col:
-        out["Age"] = subset[age_col]
-    else:
-        out["Age"] = np.nan
-
-    if gender_col:
-        out["Sex"] = subset[gender_col]
-    else:
-        out["Sex"] = ""
-
-    # Pathology labels as a comma-separated list
-    def row_labels(row) -> str:
-        labels = []
-        for lab in PATHOLOGY_CATEGORIES:
-            if lab in row and bool(row[lab]):
-                labels.append(lab)
-        return ",".join(labels)
-
-    out["Pathology_Labels"] = subset.apply(row_labels, axis=1)
-
-    out["Report_Length_Words"] = subset["report_word_count"]
-    out["Report_Length_Sentences"] = subset["report_sentences"]
-
-    # Shortened findings/impression (optional)
-    out["Findings_Short"] = subset["findings"].astype(str).str.slice(0, 200)
-    out["Impression_Short"] = subset["impression"].astype(str).str.slice(0, 200)
-
-    out["Mean_Intensity"] = subset["mean_intensity"]
-    out["Std_Intensity"] = subset["std_intensity"]
-
-    # Reason / notes
-    out["Reason_Selected"] = subset["selection_reason"].fillna("").astype(str)
-    if "tech_reason" in subset.columns:
-        out["Reason_Selected"] = out["Reason_Selected"] + ";" + subset["tech_reason"].fillna("")
-
-    return out.reset_index(drop=True)
-
-
-# --------- 5. MAIN ---------------------------------------------------------
-
-
+# ================================
+# MAIN
+# ================================
 def main():
-    os.makedirs(os.path.dirname(OUTPUT_CSV), exist_ok=True)
+    print("Loading IU-CXR metadata...")
+    df = load_iu_cxr()
 
-    print("Loading & merging IU-CXR metadata...")
-    df = load_and_merge_metadata()
-    print(f"  -> {len(df)} rows after caption cleaning")
+    print("Running integrity check...")
+    _ = check_image_integrity(df)
 
-    print("Adding simple pathology labels...")
-    df = add_pathology_labels(df)
+    print("Adding IU-CXR pathology labels (MeSH + Problems + caption)...")
+    df = add_iu_pathology_labels(df)
 
-    print("Computing image intensity statistics (subset)...")
-    df = compute_image_stats(df, max_images=2000)
+    print("Sampling UIDs for sanity subset...")
+    selected_uids = sample_uids(df, max_uids=24)
+    print(f"Selected {len(selected_uids)} unique studies")
 
-    print("Building sanity subset...")
-    subset = build_sanity_subset(df)
-    print(f"  -> selected {len(subset)} images")
+    print("Building subset with full report fields...")
+    final = build_subset(df, selected_uids)
 
-    print(f"Saving subset table to: {OUTPUT_CSV}")
-    subset.to_csv(OUTPUT_CSV, index=False)
+    print(f"Saving sanity subset -> {OUT_SUBSET}")
+    final.to_csv(OUT_SUBSET, index=False)
+
+    print(f"Saving technical-unsatisfactory rows -> {OUT_TQ_UNSAT}")
     print("Done.")
 
 
