@@ -8,16 +8,26 @@ This script:
 2. Builds `caption` = indication + findings + impression
 3. Separates and saves exams with:
      - "Technical Quality of Image Unsatisfactory" (MeSH or Problems)
-4. Removes from sanity subset ANY row where:
-     - MeSH or Problems contains "normal" (case-insensitive), OR
-     - MeSH or Problems contains "Technical Quality of Image Unsatisfactory"
+     - "Normal" cases (MeSH or Problems)
+4. Creates TWO main subsets:
+     A) sanity_subset_iucxr_v02.csv
+        - pathology-rich subset (no normals / no technical-unsatisfactory)
+        - used for Stage-1 benchmarking in MedVLMBench
+
+     B) sanity_normal_or_tech_iucxr_v01.csv
+        - all exams where MeSH/Problems indicate "normal"
+          OR "Technical Quality of Image Unsatisfactory"
+        - ideal for probing model behaviour on clean normals & bad-quality exams
+
 5. Checks image integrity:
      - missing files
      - orphan files
 6. Builds 14 CheXpert-like pathology labels using:
      - MeSH + Problems + caption
+   with conservative rules to avoid false positives (e.g., support_devices).
+
 7. Samples UIDs (study-level), includes ALL images/views for each UID
-8. Produces a subset CSV with full report fields + labels.
+   for the pathology-rich sanity subset.
 
 Run from repo root:
     python -m phase1.scripts.select_iucxr_subset
@@ -28,7 +38,6 @@ from typing import Set
 import pandas as pd
 import numpy as np
 
-
 # ================================
 # CONFIG
 # ================================
@@ -37,19 +46,30 @@ DATA_DIR = os.path.join(REPO, "phase1", "data", "chestxray_iu")
 REPORTS_CSV = os.path.join(DATA_DIR, "indiana_reports.csv")
 PROJ_CSV = os.path.join(DATA_DIR, "indiana_projections.csv")
 
+# All normalized images live here
 IMAGE_DIR = os.path.join(DATA_DIR, "images", "images_normalized")
 
+# Output: EDA reports + subsets
 OUT_DIR = os.path.join(REPO, "EDA", "eda_reports")
 os.makedirs(OUT_DIR, exist_ok=True)
 
+# Pathology-rich sanity subset (no normals / no tech-unsat)
 OUT_SUBSET = os.path.join(OUT_DIR, "sanity_subset_iucxr_v02.csv")
+
+# Integrity checks
 OUT_MISSING = os.path.join(OUT_DIR, "iu_cxr_missing_files.csv")
 OUT_ORPHAN = os.path.join(OUT_DIR, "iu_cxr_orphan_files.csv")
 OUT_UNMATCHED = os.path.join(OUT_DIR, "iu_cxr_unmatched_csv_rows.csv")
+
+# All technical-unsatisfactory rows (for transparency)
 OUT_TQ_UNSAT = os.path.join(OUT_DIR, "iu_cxr_technical_unsatisfactory.csv")
+
+# NEW: "Normal OR Technical Quality Unsatisfactory" subset
+OUT_NORMAL_TECH = os.path.join(OUT_DIR, "sanity_normal_or_tech_iucxr_v01.csv")
 
 np.random.seed(42)
 
+# CheXpert-style 14-label set (binary indicators per label)
 CHEXPERT_LABELS = [
     "no_finding",
     "enlarged_cardiomediastinum",
@@ -72,12 +92,26 @@ CHEXPERT_LABELS = [
 # STEP 1 — LOAD & MERGE CSVs
 # ================================
 def load_iu_cxr() -> pd.DataFrame:
+    """
+    Load Indiana University (IU-CXR) reports + projections, merge on UID.
+
+    Also:
+      - builds free-text `caption` (indication + findings + impression)
+      - computes basic text stats
+      - flags:
+          * is_tq_unsat   (technical quality unsatisfactory)
+          * is_normal_meta (MeSH/Problems mention "normal")
+      - saves:
+          * OUT_TQ_UNSAT: all technical-quality-unsatisfactory rows
+          * OUT_NORMAL_TECH: all "normal OR tech-unsat" rows
+    """
     rep = pd.read_csv(REPORTS_CSV)
     proj = pd.read_csv(PROJ_CSV)
 
     if "uid" not in rep.columns or "uid" not in proj.columns:
         raise KeyError("Both CSVs must contain 'uid' column")
 
+    # Merge report+projection tables on UID
     df = rep.merge(proj, on="uid", how="inner")
 
     # Build caption = indication + findings + impression
@@ -93,7 +127,7 @@ def load_iu_cxr() -> pd.DataFrame:
         + df["impression"].astype(str).str.strip()
     )
 
-    # Clean up "nan" and extra whitespace / dots
+    # Clean up "nan", duplicate dots, and extra whitespace
     df["caption"] = (
         df["caption"]
         .str.replace(r"\bnan\b", "", regex=True)
@@ -103,34 +137,45 @@ def load_iu_cxr() -> pd.DataFrame:
         .str.strip(". ")
     )
 
-    # Drop rows with empty captions
+    # Drop rows with empty captions (no usable report text)
     df = df[df["caption"].str.len() > 0].copy()
 
-    # Basic text stats
+    # Basic text stats for analysis/EDA
     df["report_word_count"] = df["caption"].str.split().apply(len)
     df["report_sentence_count"] = df["caption"].str.count(r"\.") + 1
 
-    # Lowercase MeSH / Problems for filtering
+    # Lowercase MeSH / Problems for downstream filtering
     mesh_lower = df["MeSH"].fillna("").str.lower()
     prob_lower = df["Problems"].fillna("").str.lower()
 
-    # Rows with Technical Quality of Image Unsatisfactory
+    # Rows with "Technical Quality of Image Unsatisfactory"
     is_tq_unsat = (
         mesh_lower.str.contains("technical quality of image unsatisfactory")
         | prob_lower.str.contains("technical quality of image unsatisfactory")
     )
 
-    # Rows with MeSH or Problems marked as "normal"
+    # Rows with MeSH or Problems explicitly marked as "normal"
+    # (This is metadata-driven "normal", not free-text "normal chest" etc.)
     is_normal_meta = mesh_lower.str.contains("normal") | prob_lower.str.contains("normal")
 
-    # Save all technical-unsatisfactory rows to a separate CSV
+    # Attach flags to df so other steps (sampling, labeling) can use them
+    df["is_tq_unsat"] = is_tq_unsat
+    df["is_normal_meta"] = is_normal_meta
+
+    # Save all technical-unsatisfactory rows (for reference)
     df[is_tq_unsat].to_csv(OUT_TQ_UNSAT, index=False)
 
-    # Remove BOTH:
-    #  - MeSH/Problems "normal"
-    #  - Technical Quality Unsatisfactory
-    to_exclude = is_tq_unsat | is_normal_meta
-    df = df[~to_exclude].copy()
+    # NEW: save "normal OR tech-unsat" rows as a separate subset
+    norm_or_tq_mask = is_tq_unsat | is_normal_meta
+    df_norm_tech = df[norm_or_tq_mask].copy()
+    df_norm_tech.to_csv(OUT_NORMAL_TECH, index=False)
+    print(f"[Subset] Normal/technical-unsatisfactory CSV -> {OUT_NORMAL_TECH}")
+    print(f"         Rows in normal/tech subset: {len(df_norm_tech)}")
+
+    # IMPORTANT:
+    # We DO NOT drop these rows from `df` here.
+    # The main pathology-rich subset will be constructed later by explicitly
+    # excluding is_tq_unsat / is_normal_meta during UID sampling.
 
     return df
 
@@ -139,15 +184,20 @@ def load_iu_cxr() -> pd.DataFrame:
 # STEP 2 — PATH CHECKING
 # ================================
 def resolve_image_path(filename: str) -> str:
+    """Map a filename to its full normalized image path."""
     return os.path.join(IMAGE_DIR, filename)
 
 
 def check_image_integrity(df: pd.DataFrame):
+    """
+    Verify that every filename in the merged CSV has a corresponding file on disk,
+    and report any orphan files in the folder that are not referenced by the CSV.
+    """
     csv_files = set(df["filename"].astype(str))
     folder_files = set(os.listdir(IMAGE_DIR))
 
-    missing = sorted(list(csv_files - folder_files))
-    orphan = sorted(list(folder_files - csv_files))
+    missing = sorted(list(csv_files - folder_files))  # CSV references, file not found
+    orphan = sorted(list(folder_files - csv_files))   # Files on disk but no CSV row
 
     unmatched_rows = df[df["filename"].isin(missing)].copy()
 
@@ -172,11 +222,22 @@ def add_iu_pathology_labels(df: pd.DataFrame) -> pd.DataFrame:
     Uses:
       - caption (indication + findings + impression)  -> free text
       - MeSH + Problems                               -> semi-structured codes
+
+    Design goal:
+      * Be expressive enough to approximate CheXpert labels.
+      * Still conservative to avoid false positive labels.
+
+    For each label, we:
+      - define positive patterns
+      - sometimes define explicit negative patterns (e.g., "no pneumothorax")
     """
     caption = df["caption"].fillna("").str.lower()
     mp = (df["MeSH"].fillna("") + ";" + df["Problems"].fillna("")).str.lower()
 
     def has_caption(pos_patterns, neg_patterns=None):
+        """Heuristic match in free text with optional negative patterns."""
+        if not pos_patterns:
+            return pd.Series(False, index=caption.index)
         pos_pat = "|".join(pos_patterns)
         pos_m = caption.str.contains(pos_pat, regex=True)
         if neg_patterns:
@@ -186,6 +247,9 @@ def add_iu_pathology_labels(df: pd.DataFrame) -> pd.DataFrame:
         return pos_m
 
     def has_mp(patterns):
+        """Heuristic match in MeSH/Problems fields."""
+        if not patterns:
+            return pd.Series(False, index=mp.index)
         pat = "|".join(patterns)
         return mp.str.contains(pat, regex=True)
 
@@ -275,25 +339,44 @@ def add_iu_pathology_labels(df: pd.DataFrame) -> pd.DataFrame:
     df["fracture"] = frac
 
     # 13. Support devices (tubes, lines, pacemaker, etc.)
-    supp = has_mp(["tube, inserted", "medical device", "pacemaker"])
-    supp |= has_caption(
-        [
-            "endotracheal tube",
-            "tracheostomy tube",
-            "central venous catheter",
-            "central line",
-            "picc line",
-            "pacemaker",
-            "icd device",
-            "defibrillator",
-            "chest tube",
-            "sternal wires",
-        ],
-        ["no tubes or lines"],
-    )
+    #
+    # ⚠ To avoid false positives (like the uid=2894 case you observed),
+    #    we take a conservative approach:
+    #    - use ONLY MeSH/Problems codes;
+    #    - DO NOT currently rely on caption-based keywords.
+    #
+    # You can always reintroduce caption-based patterns later with stricter rules.
+    supp = has_mp([
+        "tube, inserted",
+        "catheters, indwelling",
+        "pacemaker",
+        "defibrillators, implantable",
+        "prosthesis implantation",
+    ])
+
+    # Example (commented) if you later want *very strict* caption-based signals:
+    # supp |= has_caption(
+    #     [
+    #         "endotracheal tube",
+    #         "tracheostomy tube",
+    #         "central venous catheter",
+    #         "central line",
+    #         "picc line",
+    #         "pacemaker",
+    #         "icd device",
+    #         "defibrillator",
+    #         "chest tube",
+    #         "sternal wires",
+    #     ],
+    #     ["no tubes or lines", "no lines or tubes"],
+    # )
+
     df["support_devices"] = supp
 
-    # 14. No finding: only if nothing else on AND clearly normal in text
+    # 14. No finding:
+    #     - true ONLY if:
+    #         * none of the other 13 labels fire
+    #         * and caption looks clearly "normal"
     pathology_cols = [
         "enlarged_cardiomediastinum",
         "cardiomegaly",
@@ -322,18 +405,27 @@ def add_iu_pathology_labels(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ================================
-# STEP 4 — SAMPLE UIDs (no normals by metadata)
+# STEP 4 — SAMPLE UIDs (pathology-rich subset)
 # ================================
 def sample_uids(df: pd.DataFrame, max_uids: int = 24) -> Set[str]:
     """
     Sample UIDs to get a pathology-diverse sanity subset.
 
-    All rows with MeSH/Problems 'normal' or technical-unsat
-    have ALREADY been removed in load_iu_cxr().
+    IMPORTANT:
+    - We now KEEP normal / technical-unsatisfactory rows in `df`.
+    - To build the pathology-rich subset for Stage-1, we must
+      explicitly exclude these cases when sampling.
     """
+    # Use only non-normal, non-technical-unsatisfactory rows for sampling
+    if "is_tq_unsat" in df.columns and "is_normal_meta" in df.columns:
+        base = df[~(df["is_tq_unsat"] | df["is_normal_meta"])].copy()
+    else:
+        # Fallback if flags are missing (should not happen if load_iu_cxr ran)
+        base = df.copy()
 
     selected: Set[str] = set()
 
+    # Heuristic: how many UIDs we try to grab for each pathology
     rules = {
         "cardiomegaly": 3,
         "pneumonia": 3,
@@ -348,10 +440,11 @@ def sample_uids(df: pd.DataFrame, max_uids: int = 24) -> Set[str]:
         "support_devices": 2,
     }
 
+    # First pass: label-specific sampling
     for label, n in rules.items():
-        if label not in df.columns:
+        if label not in base.columns:
             continue
-        uids = df[df[label] == True]["uid"].unique()
+        uids = base[base[label] == True]["uid"].unique()
         if len(uids) == 0:
             continue
 
@@ -359,8 +452,8 @@ def sample_uids(df: pd.DataFrame, max_uids: int = 24) -> Set[str]:
         chosen = np.random.choice(uids, size=take, replace=False)
         selected.update(chosen)
 
-    # If we still have room, fill with any remaining UIDs
-    all_uids = df["uid"].unique()
+    # Second pass: fill remaining slots with any remaining UIDs (still from base)
+    all_uids = base["uid"].unique()
     remaining_slots = max_uids - len(selected)
     if remaining_slots > 0:
         remaining = [u for u in all_uids if u not in selected]
@@ -376,6 +469,13 @@ def sample_uids(df: pd.DataFrame, max_uids: int = 24) -> Set[str]:
 # STEP 5 — BUILD FINAL SUBSET
 # ================================
 def build_subset(df: pd.DataFrame, selected_uids: Set[str]) -> pd.DataFrame:
+    """
+    Build the final pathology-rich sanity subset (study-level).
+
+    For each selected UID, include ALL images/views for that UID.
+    Also aggregate pathology labels into a `Pathology_Labels_14` column
+    with comma-separated label names.
+    """
     sub = df[df["uid"].isin(selected_uids)].copy()
 
     def collect_labels(row):
@@ -387,6 +487,7 @@ def build_subset(df: pd.DataFrame, selected_uids: Set[str]) -> pd.DataFrame:
 
     sub["Pathology_Labels_14"] = sub.apply(collect_labels, axis=1)
 
+    # Columns to keep in the subset CSV
     keep = [
         "uid",
         "filename",
@@ -407,7 +508,7 @@ def build_subset(df: pd.DataFrame, selected_uids: Set[str]) -> pd.DataFrame:
     keep = [c for c in keep if c in sub.columns]
     out = sub[keep].reset_index(drop=True)
 
-    # Rename for convenience in notebooks
+    # Rename for convenience in notebooks and scripts
     out = out.rename(
         columns={
             "uid": "UID",
@@ -432,17 +533,18 @@ def main():
     print("Adding IU-CXR pathology labels (MeSH + Problems + caption)...")
     df = add_iu_pathology_labels(df)
 
-    print("Sampling UIDs for sanity subset...")
+    print("Sampling UIDs for pathology-rich sanity subset...")
     selected_uids = sample_uids(df, max_uids=24)
-    print(f"Selected {len(selected_uids)} unique studies")
+    print(f"Selected {len(selected_uids)} unique studies for pathology-rich subset")
 
     print("Building subset with full report fields...")
     final = build_subset(df, selected_uids)
 
-    print(f"Saving sanity subset -> {OUT_SUBSET}")
+    print(f"Saving pathology-rich sanity subset -> {OUT_SUBSET}")
     final.to_csv(OUT_SUBSET, index=False)
 
-    print(f"Saving technical-unsatisfactory rows -> {OUT_TQ_UNSAT}")
+    print(f"Technical-unsatisfactory rows saved -> {OUT_TQ_UNSAT}")
+    print(f"Normal/tech-unsatisfactory subset saved -> {OUT_NORMAL_TECH}")
     print("Done.")
 
 
