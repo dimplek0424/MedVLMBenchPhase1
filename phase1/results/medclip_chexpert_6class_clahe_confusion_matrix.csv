@@ -1,0 +1,7 @@
+,Atelectasis,Cardiomegaly,Consolidation,Edema,Pleural Effusion,Others
+Atelectasis,2,0,0,0,2,0
+Cardiomegaly,0,4,0,0,0,0
+Consolidation,0,0,1,0,3,0
+Edema,0,0,0,1,3,0
+Pleural Effusion,0,0,0,0,4,0
+Others,4,0,1,2,2,0
