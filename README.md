@@ -308,6 +308,6 @@ Contact: dimplek0424@gmail.com
 
 If you use this work, please cite:
 
-> Dimple Khatri and Sanjan TP Gupta (2025).  
-> *Towards comprehensive benchmarking of medical vision-language models.*  
-> **Briefings in Bioinformatics**, 26(Suppl. 1). Oxford Academic..
+Dimple Khatri and Sanjan TP Gupta (2025).  
+*Towards comprehensive benchmarking of medical vision-language models.*  
+**Briefings in Bioinformatics**, 26(Suppl. 1). Oxford Academic.
