@@ -20,14 +20,24 @@ This repository serves as a **research-first, reproducible benchmark suite** des
 
 ---
 
+### 📄 Publication
+
+**Dimple Khatri and Sanjan TP Gupta**  
+*Towards Comprehensive Benchmarking of Medical Vision-Language Models.*   
+Abstract published in **Briefings in Bioinformatics** (Oxford Academic),  
+[Volume 26, Supplement 1 — GIW XXXIV ISCB-Asia 2025 Abstract Book](https://academic.oup.com/bib/issue/26/Supplement_1), 2025.
+
+---
+
 ### 🏅 Mentorship & Scientific Recognition
+
 This research is conducted under the mentorship of **Dr. Sanjan T. P. Gupta (AI for Healthcare)**.
 
-The work has been formally recognized through:
-- 🧾 **Poster Talk — GIW XXXIV ISCB Main Conference 2025**
-- 🎤 **Oral Presentation — ASCS 2025 Symposium on Advanced Computing & Systems**
+The work has been formally recognized through peer-reviewed international venues:
+- 🧾 **Poster Presentation — GIW XXXIV ISCB-Asia 2025 (Main Conference)**
+- 🎤 **Oral Presentation — ASCS 2025 (ISCB Student Council Symposium)**
 
-These recognitions reflect the scientific rigor, relevance, and community impact of this multi-phase Med-VLM benchmarking effort.
+These recognitions reflect the scientific rigor and relevance of this multi-phase benchmarking study on medical vision–language models.
 
 ---
 
