@@ -301,3 +301,11 @@ pip install -r requirements_kaggle.txt
 # 👩‍💻 Maintainer
 **Dimple Khatri** — AI for Healthcare Researcher  
 Contact: dimplek0424@gmail.com
+
+### Citation
+
+If you use this work, please cite:
+
+Dimple Khatri and Sanjan TP Gupta (2025).
+*Towards comprehensive benchmarking of medical vision-language models.*
+Briefings in Bioinformatics, 26(Suppl. 1). Oxford Academic.
